@@ -256,6 +256,7 @@ export default function App() {
       // ── 硬编码投降信号 ──
       const surrenderTexts = ['我认输', '我不知道'];
       let judge: JudgeResult;
+      let npcChainPromise: Promise<{ dialogue: { npcId: string; content: string }[]; shuffled: typeof state.npcs } | null> | null = null;
       if (surrenderTexts.includes(text.trim())) {
         judge = {
           feedback: text.trim() === '我认输' ? '你自己先放弃了。' : '一句"不知道"暴露了一切。',
@@ -265,6 +266,19 @@ export default function App() {
         // 让玩家消息先渲染到 DOM，再进入 gameover 画面
         await new Promise(r => setTimeout(r, 600));
       } else {
+        // ── 并行启动 NPC 链（不等 judge，推理阶段全速生成，无延迟）──
+        const shuffled = [...state.npcs].sort(() => Math.random() - 0.5).slice(0, 4);
+        npcChainPromise = (async () => {
+          const dialogue: { npcId: string; content: string }[] = [];
+          for (let i = 0; i < shuffled.length; i++) {
+            const npc = shuffled[i];
+            const prevContent = i > 0 ? dialogue[i - 1].content : null;
+            const content = await generateSingleNPCReply(npc, '', currentRound, text, prevContent, fullHistory, state.difficulty);
+            dialogue.push({ npcId: npc.id, content });
+          }
+          return { dialogue, shuffled };
+        })().catch(() => null);
+
         judge = await judgeRound(text, prevNpcDialogue, state.npcs, playerHistory, state.suspicion, currentRound, state.difficulty);
       }
 
@@ -310,31 +324,25 @@ export default function App() {
       // 如果游戏结束，不再生成 NPC 回复
       if (isLoss || isWin) return;
 
-      // ── 再串行输出 NPC 回复 ──
-      const dialogue: { npcId: string; content: string }[] = [];
-      const shuffled = [...state.npcs].sort(() => Math.random() - 0.5).slice(0, 4);
-      for (let i = 0; i < shuffled.length; i++) {
-        const npc = shuffled[i];
-        const prevContent = i > 0 ? dialogue[i - 1].content : null;
-
-        const content = await generateSingleNPCReply(
-          npc, '', currentRound, text, prevContent, fullHistory, state.difficulty
-        );
-
-        dialogue.push({ npcId: npc.id, content });
-
-        const npcMsg: Message = {
-          id: `npc-${Date.now()}-${i}`,
-          role: 'expert' as const,
-          author: npc.name,
-          content,
-          timestamp: new Date(),
-          npcId: npc.id,
-        };
-        setState(prev => ({ ...prev, messages: [...prev.messages, npcMsg] }));
-
-        if (i < shuffled.length - 1) {
-          await new Promise(r => setTimeout(r, 500 + Math.random() * 600));
+      // NPC 链已完成（与 judge 并行），逐条渲染（80-230ms 间隔，模拟中断插入感）
+      const npcResult = await npcChainPromise;
+      if (npcResult) {
+        const { dialogue, shuffled: finalShuffled } = npcResult;
+        for (let i = 0; i < dialogue.length; i++) {
+          const d = dialogue[i];
+          const npc = finalShuffled[i];
+          const npcMsg: Message = {
+            id: `npc-${Date.now()}-${i}`,
+            role: 'expert' as const,
+            author: npc.name,
+            content: d.content,
+            timestamp: new Date(),
+            npcId: npc.id,
+          };
+          setState(prev => ({ ...prev, messages: [...prev.messages, npcMsg] }));
+          if (i < dialogue.length - 1) {
+            await new Promise(r => setTimeout(r, 80 + Math.random() * 150));
+          }
         }
       }
 
