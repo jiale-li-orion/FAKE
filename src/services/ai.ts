@@ -54,8 +54,8 @@ export function generateNPCPersonalities(): NPCPersonality[] {
 // ══════════════════════════════════════════
 
 async function callAI(prompt: string, responseFormat: 'json' | 'text' = 'json', model?: string) {
-  const geminiKey = getStoredKey('GEMINI_API_KEY') || process.env.GEMINI_API_KEY || "";
-  const deepseekKey = getStoredKey('DEEPSEEK_API_KEY') || process.env.DEEPSEEK_API_KEY || "";
+  const geminiKey = getStoredKey('GEMINI_API_KEY') || "";
+  const deepseekKey = getStoredKey('DEEPSEEK_API_KEY') || "";
 
   if (deepseekKey) {
     try {
