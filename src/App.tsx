@@ -1081,26 +1081,26 @@ export default function App() {
 
               <div className="flex items-center gap-6">
                 <div className="flex flex-col items-center">
-                  <span className="text-[9px] text-slate-500 uppercase font-bold">圈内感</span>
+                  <span className="text-xs text-slate-500 uppercase font-bold">圈内感</span>
                   <span className={`text-xs font-mono font-bold ${state.lastJudge.breakdown?.belonging && state.lastJudge.breakdown.belonging < 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
                     {state.lastJudge.breakdown?.belonging && state.lastJudge.breakdown.belonging > 0 ? '+' : ''}{state.lastJudge.breakdown?.belonging ?? 0}
                   </span>
                 </div>
                 <div className="flex flex-col items-center">
-                  <span className="text-[9px] text-slate-500 uppercase font-bold">身份自洽</span>
+                  <span className="text-xs text-slate-500 uppercase font-bold">身份自洽</span>
                   <span className={`text-xs font-mono font-bold ${state.lastJudge.breakdown?.consistency && state.lastJudge.breakdown.consistency < 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
                     {state.lastJudge.breakdown?.consistency && state.lastJudge.breakdown.consistency > 0 ? '+' : ''}{state.lastJudge.breakdown?.consistency ?? 0}
                   </span>
                 </div>
                 <div className="flex flex-col items-center">
-                  <span className="text-[9px] text-slate-500 uppercase font-bold">存在感</span>
+                  <span className="text-xs text-slate-500 uppercase font-bold">存在感</span>
                   <span className={`text-xs font-mono font-bold ${state.lastJudge.breakdown?.presence && state.lastJudge.breakdown.presence < 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
                     {state.lastJudge.breakdown?.presence && state.lastJudge.breakdown.presence > 0 ? '+' : ''}{state.lastJudge.breakdown?.presence ?? 0}
                   </span>
                 </div>
                 <div className="h-8 w-[1px] bg-white/10 hidden sm:block" />
                 <div className="flex flex-col items-end">
-                  <span className="text-[9px] text-slate-500 uppercase font-bold">总评变动</span>
+                  <span className="text-xs text-slate-500 uppercase font-bold">总评变动</span>
                   <span className={`text-sm font-mono font-bold ${state.lastJudge.suspicionIncrease < 0 ? 'text-emerald-400' : state.lastJudge.suspicionIncrease > 0 ? 'text-red-400' : 'text-slate-400'}`}>
                     {state.lastJudge.suspicionIncrease > 0 ? '+' : ''}{state.lastJudge.suspicionIncrease}%
                   </span>
@@ -1328,9 +1328,9 @@ export default function App() {
                             { label: '最差一轮', value: stats ? `${stats.worst > 0 ? '+' : ''}${stats.worst}%` : '-', sub: stats?.worstRound.feedback, color: 'text-red-400' },
                           ].map(card => (
                             <div key={card.label} className="bg-slate-800/60 border border-slate-700/30 rounded-xl p-4 text-center">
-                              <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">{card.label}</p>
+                              <p className="text-xs text-slate-500 uppercase font-bold tracking-widest">{card.label}</p>
                               <p className={`text-2xl font-black mt-1 ${card.color}`}>{card.value}</p>
-                              {card.sub && <p className="text-[10px] text-slate-500 mt-1 line-clamp-1">{card.sub}</p>}
+                              {card.sub && <p className="text-xs text-slate-500 mt-1 line-clamp-1">{card.sub}</p>}
                             </div>
                           ))}
                         </div>
@@ -1355,7 +1355,7 @@ export default function App() {
                                   stroke="rgba(0,0,0,0.5)" strokeWidth="1.5" />
                               ))}
                             </svg>
-                            <div className="flex justify-between mt-1 text-[10px] text-slate-600 font-mono">
+                            <div className="flex justify-between mt-1 text-xs text-slate-600 font-mono">
                               {timeline.filter((_, i) => i === 0 || i === timeline.length - 1 || i === Math.floor(timeline.length / 2)).map(t => (
                                 <span key={t.round}>R{t.round}</span>
                               ))}
@@ -1374,9 +1374,9 @@ export default function App() {
                               const dimColors: Record<string, string> = { belonging: 'text-blue-400', consistency: 'text-amber-400', presence: 'text-emerald-400' };
                               return (
                                 <div key={dim} className="text-center">
-                                  <p className={`text-[10px] uppercase font-bold tracking-wider ${dimColors[dim]}`}>{dimLabels[dim]}</p>
+                                  <p className={`text-xs uppercase font-bold tracking-wider ${dimColors[dim]}`}>{dimLabels[dim]}</p>
                                   <p className="text-2xl font-black text-white mt-1">{avg.toFixed(1)}</p>
-                                  <p className="text-[10px] text-slate-500">平均分</p>
+                                  <p className="text-xs text-slate-500">平均分</p>
                                 </div>
                               );
                             })}
@@ -1392,7 +1392,7 @@ export default function App() {
                           <div key={i} className="border-t border-slate-800 first:border-t-0 pt-4 first:pt-0">
                             <div className="flex items-center gap-2 mb-3">
                               <span className="text-lg">{sec.emoji}</span>
-                              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{sec.title}</span>
+                              <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">{sec.title}</span>
                             </div>
                             {sec.emoji === '⚠️' && sec.lines.map((l, j) =>
                               j === 0
@@ -1400,7 +1400,7 @@ export default function App() {
                                 : <p key={j} className="text-base text-slate-200 leading-relaxed">{l}</p>
                             )}
                             {sec.emoji === '🤖' && <div className="bg-black/80 border border-emerald-500/25 rounded-xl p-4 font-mono">
-                              <p className="text-emerald-400 text-xs mb-2">$ ./analyze.sh --roast</p>
+                              <p className="text-emerald-400 text-xs mb-2">▸ AI 诊断报告</p>
                               <p className="text-emerald-300 font-bold text-lg leading-relaxed">{sec.lines[0] || ''}</p>
                               {sec.lines.slice(1).map((l, j) => <p key={j} className="text-emerald-400/60 text-xs mt-1">{l}</p>)}
                               <p className="text-emerald-500/40 text-xs mt-2 animate-pulse">$ _</p>
@@ -1451,7 +1451,7 @@ export default function App() {
                                   { label: '局势应对', value: entry.breakdown?.bonus ?? 0, color: 'text-violet-400' },
                                 ].map(d => (
                                   <div key={d.label} className="flex items-center gap-2">
-                                    <span className="text-[10px] text-slate-500 uppercase font-bold">{d.label}</span>
+                                    <span className="text-xs text-slate-500 uppercase font-bold">{d.label}</span>
                                     <span className={`text-sm font-mono font-bold ${d.color}`}>
                                       {d.value > 0 ? '+' : ''}{d.value}
                                     </span>
@@ -1565,9 +1565,9 @@ export default function App() {
                             { label: '最差一轮', value: stats ? `${stats.worst > 0 ? '+' : ''}${stats.worst}%` : '-', sub: stats?.worstRound.feedback, color: 'text-red-400' },
                           ].map(card => (
                             <div key={card.label} className="bg-slate-800/60 border border-slate-700/30 rounded-xl p-4 text-center">
-                              <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">{card.label}</p>
+                              <p className="text-xs text-slate-500 uppercase font-bold tracking-widest">{card.label}</p>
                               <p className={`text-2xl font-black mt-1 ${card.color}`}>{card.value}</p>
-                              {card.sub && <p className="text-[10px] text-slate-500 mt-1 line-clamp-1">{card.sub}</p>}
+                              {card.sub && <p className="text-xs text-slate-500 mt-1 line-clamp-1">{card.sub}</p>}
                             </div>
                           ))}
                         </div>
@@ -1591,7 +1591,7 @@ export default function App() {
                                   stroke="rgba(0,0,0,0.5)" strokeWidth="1.5" />
                               ))}
                             </svg>
-                            <div className="flex justify-between mt-1 text-[10px] text-slate-600 font-mono">
+                            <div className="flex justify-between mt-1 text-xs text-slate-600 font-mono">
                               {timeline.filter((_, i) => i === 0 || i === timeline.length - 1 || i === Math.floor(timeline.length / 2)).map(t => (
                                 <span key={t.round}>R{t.round}</span>
                               ))}
@@ -1609,9 +1609,9 @@ export default function App() {
                               const dimColors: Record<string, string> = { belonging: 'text-blue-400', consistency: 'text-amber-400', presence: 'text-emerald-400' };
                               return (
                                 <div key={dim} className="text-center">
-                                  <p className={`text-[10px] uppercase font-bold tracking-wider ${dimColors[dim]}`}>{dimLabels[dim]}</p>
+                                  <p className={`text-xs uppercase font-bold tracking-wider ${dimColors[dim]}`}>{dimLabels[dim]}</p>
                                   <p className="text-2xl font-black text-white mt-1">{avg.toFixed(1)}</p>
-                                  <p className="text-[10px] text-slate-500">平均分</p>
+                                  <p className="text-xs text-slate-500">平均分</p>
                                 </div>
                               );
                             })}
@@ -1627,7 +1627,7 @@ export default function App() {
                           <div key={i} className="border-t border-slate-800 first:border-t-0 pt-4 first:pt-0">
                             <div className="flex items-center gap-2 mb-3">
                               <span className="text-lg">{sec.emoji}</span>
-                              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{sec.title}</span>
+                              <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">{sec.title}</span>
                             </div>
                             {sec.emoji === '⚠️' && sec.lines.map((l, j) =>
                               j === 0
@@ -1635,7 +1635,7 @@ export default function App() {
                                 : <p key={j} className="text-base text-slate-200 leading-relaxed">{l}</p>
                             )}
                             {sec.emoji === '🤖' && <div className="bg-black/80 border border-emerald-500/25 rounded-xl p-4 font-mono">
-                              <p className="text-emerald-400 text-xs mb-2">$ ./analyze.sh --roast</p>
+                              <p className="text-emerald-400 text-xs mb-2">▸ AI 诊断报告</p>
                               <p className="text-emerald-300 font-bold text-lg leading-relaxed">{sec.lines[0] || ''}</p>
                               {sec.lines.slice(1).map((l, j) => <p key={j} className="text-emerald-400/60 text-xs mt-1">{l}</p>)}
                               <p className="text-emerald-500/40 text-xs mt-2 animate-pulse">$ _</p>
@@ -1686,7 +1686,7 @@ export default function App() {
                                   { label: '局势应对', value: entry.breakdown?.bonus ?? 0, color: 'text-violet-400' },
                                 ].map(d => (
                                   <div key={d.label} className="flex items-center gap-2">
-                                    <span className="text-[10px] text-slate-500 uppercase font-bold">{d.label}</span>
+                                    <span className="text-xs text-slate-500 uppercase font-bold">{d.label}</span>
                                     <span className={`text-sm font-mono font-bold ${d.color}`}>
                                       {d.value > 0 ? '+' : ''}{d.value}
                                     </span>
