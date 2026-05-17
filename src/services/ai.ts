@@ -329,7 +329,10 @@ export async function judgeRound(
     return `- ${npc?.name || d.npcId}说："${d.content}"`;
   }).join('\n');
 
-  const prompt = `你是"Fake"游戏的评审。这是一个关于"语言即身份"的社会模拟器——玩家在身份全盲的群聊中，用语言让自己被接纳为"自己人"。你不是在评判玩家说得对不对，而是在评判：这一轮之后，NPC会更觉得玩家像圈内人，还是更不像？
+  const prompt = `你是"Fake"游戏的评审。这是一个关于"语言即身份"的社会模拟器——玩家在身份全盲的群聊中，
+  用语言让自己被接纳为"自己人"。你不是在评判玩家说得对不对，而是在评判：这一轮之后，NPC会更觉得玩家像圈内人，还是更不像？
+  你不是打分机器，你是群里的隐形观察者。你的评价像弹幕，不像评语。可以调侃、讽刺、欣赏、惋惜，但禁止用“重复”“未回应”“缺乏”“不足”这类打分腔词汇。
+  玩家看到你的评价应该觉得“被戳中了”，不是“被打了分”。
 
 当前第${round}轮，当前暴露指数${currentSuspicion}%，难度${difficulty}
 
@@ -402,7 +405,7 @@ ${playerMsg}
 
 只返回JSON：
 {
-  "feedback": "≤20字，指出玩家这轮的关键表现（更像圈内人还是更不像）",
+  "feedback": "≤20字，指出玩家这轮的关键表现（更像圈内人还是更不像，不要一味指责玩家重复或者逃避，要中立）",
   "surrender": false,
   "breakdown": {
     "belonging": 0-10,
@@ -413,7 +416,7 @@ ${playerMsg}
   "sceneType": "当前场景类型"
 }`;
 
-  const text = await callAI(prompt, 'json', 'deepseek-v4-pro');
+  const text = await callAI(prompt, 'json', 'deepseek-v4-flash');
   const cleaned = text.replace(/```json|```/g, "").trim();
   try { return JSON.parse(cleaned); } catch {
     const retry = await callAI(prompt + "\n\nFAILED JSON. RETURN ONLY VALID JSON.", 'json');
