@@ -341,7 +341,7 @@ export default function App() {
           };
           setState(prev => ({ ...prev, messages: [...prev.messages, npcMsg] }));
           if (i < dialogue.length - 1) {
-            await new Promise(r => setTimeout(r, 80 + Math.random() * 150));
+            await new Promise(r => setTimeout(r, 800 + Math.random() * 400));
           }
         }
       }
