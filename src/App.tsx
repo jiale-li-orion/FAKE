@@ -262,6 +262,8 @@ export default function App() {
           surrender: true,
           breakdown: { belonging: 10, consistency: 10, presence: 10, bonus: 0 },
         };
+        // 让玩家消息先渲染到 DOM，再进入 gameover 画面
+        await new Promise(r => setTimeout(r, 600));
       } else {
         judge = await judgeRound(text, prevNpcDialogue, state.npcs, playerHistory, state.suspicion, currentRound, state.difficulty);
       }
