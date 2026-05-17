@@ -19,7 +19,7 @@ import {
   ShieldCheck,
   Settings2
 } from 'lucide-react';
-import { Message, GameState, Difficulty, NPCPersonality, JudgeEntry } from './types';
+import { Message, GameState, Difficulty, NPCPersonality, JudgeEntry, JudgeResult } from './types';
 import { generateGameStart, generateSingleNPCReply, judgeRound, generateGameRecap, generateTopics } from './services/ai';
 
 const INITIAL_STATE: GameState = {
@@ -253,7 +253,18 @@ export default function App() {
         .map((m: any) => m.content)
         .join('\n---\n');
 
-      const judge = await judgeRound(text, prevNpcDialogue, state.npcs, playerHistory, state.suspicion, currentRound, state.difficulty);
+      // ── 硬编码投降信号 ──
+      const surrenderTexts = ['我认输', '我不知道'];
+      let judge: JudgeResult;
+      if (surrenderTexts.includes(text.trim())) {
+        judge = {
+          feedback: text.trim() === '我认输' ? '你自己先放弃了。' : '一句"不知道"暴露了一切。',
+          surrender: true,
+          breakdown: { belonging: 10, consistency: 10, presence: 10, bonus: 0 },
+        };
+      } else {
+        judge = await judgeRound(text, prevNpcDialogue, state.npcs, playerHistory, state.suspicion, currentRound, state.difficulty);
+      }
 
       // ── 从评审分数计算暴露指数增量（难度控制衰减/放大系数）──
       const b = judge.breakdown || { belonging: 5, consistency: 5, presence: 5, bonus: 0 };
