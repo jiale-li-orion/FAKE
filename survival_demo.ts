@@ -193,7 +193,7 @@ async function main() {
 
   // ── 5. 写入文件 ──
   const fs = await import('fs');
-  fs.writeFileSync('/mnt/c/Users/29461/Desktop/FAKE/生存典范.md', transcript, 'utf-8');
+  fs.writeFileSync('./生存典范.md', transcript, 'utf-8');
   console.log(`\n✅ 已保存到 生存典范.md`);
 }
 

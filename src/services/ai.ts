@@ -59,6 +59,8 @@ async function callAI(prompt: string, responseFormat: 'json' | 'text' = 'json', 
 
   if (deepseekKey) {
     try {
+      // ⚠️ dangerouslyAllowBrowser: true 表示 API Key 在前端明文传输。
+      // 纯前端架构无法完全规避；如需更高安全性，应改为后端代理转发。
       const aiDeepSeek = new OpenAI({
         apiKey: deepseekKey, baseURL: "https://api.deepseek.com", dangerouslyAllowBrowser: true
       });
