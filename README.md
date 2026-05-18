@@ -30,7 +30,9 @@ npm run dev
 npm run build && npm start
 ```
 
-> **API 说明**：优先使用 DeepSeek API。如 DeepSeek 不可用，自动降级至 Gemini。两个都不用配也行，至少配一个。
+> **API 说明**：默认使用 DeepSeek API（快速、稳定），不可用时自动降级至 Gemini。至少配置一个即可使用全部功能。
+>
+> 本项目早期框架和 prompt 原型由 Gemini 辅助生成，后续开发和优化由 DeepSeek 驱动。
 
 ---
 
