@@ -2,6 +2,10 @@
 
 > 身份不是你的。是这一轮的。
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](./CONTRIBUTING.md)
+![Tech](https://img.shields.io/badge/stack-React%2019%20%7C%20Vite%206%20%7C%20Tailwind%204-blue)
+
 一个关于"语言即身份"的社会模拟器。你是一个身份流亡者，在陌生的群聊中，用语言临时构造身份——混进去，活下去，别崩解。
 
 ---
@@ -204,3 +208,94 @@ index.html               # HTML 入口
 | AI SDK | OpenAI SDK (DeepSeek) + Google GenAI (Gemini) |
 | 图标 | Lucide React |
 | 服务端 | Express (静态文件 + Vite 中间件) |
+
+---
+
+## 已知问题 & 贡献指南
+
+欢迎提交 PR 共同优化。以下列出目前已知的架构漏洞、性能瓶颈和功能缺陷，标注了优先级（🔴严重 🟠高 🟡中 🟢低）和修复难度。
+
+### 🏗 架构
+
+| # | 问题 | 优先级 | 难度 | 说明 |
+|---|------|--------|------|------|
+| A1 | 单体 `App.tsx` （1900+ 行）无组件拆分 | 🔴 | 大 | 状态、渲染、逻辑全部耦合，每次 `setState` 重跑全部代码。建议拆分为 `HomePage` / `GamePage` / `GameOverPage` |
+| A2 | API Key 纯前端明文传输 | 🟠 | 中 | `dangerouslyAllowBrowser: true`，XSS 下可被窃取。建议通过 Express 后端代理 API 请求 |
+| A3 | `localStorage` 每次 `setState` 同步写盘 | 🟠 | 小 | 每轮 5+ 次 `JSON.stringify` + `setItem` 阻塞主线程。建议用 `useRef` + debounce 1s 写入 |
+| A4 | 无 Error Boundary | 🟠 | 小 | 任何未捕获异常直接白屏。建议在 `main.tsx` 包裹 `<ErrorBoundary>` |
+| A5 | 消息数组无限增长无裁剪 | 🟡 | 小 | 20 轮后 DOM 节点 100+，滚动变慢。建议只渲染最近 50 条，完整历史存 `useRef` |
+| A6 | 游戏状态无迁移策略 | 🟡 | 小 | `localStorage` 的 `fakeExpert_save` 格式变更后旧存档会崩溃。建议加 `version` 字段 |
+| A7 | NPC 链串行依赖 `prevContent` | 🟡 | 大 | 4 个 NPC 必须串行生成（每个需要上一个的回复），已与 judge 并行但链内无法再加速 |
+
+### ⚡ 性能
+
+| # | 问题 | 优先级 | 难度 | 说明 |
+|---|------|--------|------|------|
+| P1 | 模型推理占用户感知等待的 ~95% | 🔴 | 大 | flash 单次 ~2.7s，串行链累计 ~10.8s + 显示间隔 ~3s。可探索流式输出、更小模型、缓存常见回复 |
+| P2 | 零 `React.memo` / `useMemo` / `useCallback` | 🟠 | 大 | 每次键盘输入都重跑 1900 行 JS。建议拆分组件后对 `MessageList`、`ParticleBg` 等加 memo |
+| P3 | 60 颗粒子的随机位置每次渲染重新 `Math.random()` | 🟡 | 小 | 打字时不断重算 60 个 inline style。建议移入 `useRef` 仅挂载时生成一次 |
+| P4 | 多处 `backdrop-filter: blur()` 叠加 | 🟡 | 小 | header、footer、rules card、glow orbs 同时 blur，GPU 合成层开销大。可用半透明背景替代装饰性 blur |
+| P5 | `AnimatePresence` + `layout` 动画在消息列表上 | 🟡 | 中 | 每条新消息触发 FLIP 计算。建议移除消息气泡的 `layout` prop，仅保留 `initial/animate` |
+| P6 | Tailwind v4 全量 class 扫描 | 🟢 | 小 | 首次编译扫描 1900 行 JSX。升级到 Tailwind v4.1+ 的 JIT 或配置 `content` 限制范围 |
+
+### 🛡 健壮性
+
+| # | 问题 | 优先级 | 难度 | 说明 |
+|---|------|--------|------|------|
+| R1 | API 调用无统一超时/重试 | 🟠 | 小 | judge 评审 JSON 解析失败只重试 1 次，二次失败直接崩。建议加 AbortController(15s) + 兜底默认值 |
+| R2 | `generateTopics()` 无缓存 | 🟡 | 小 | 每次点击重复调用 LLM，浪费 API 额度。建议 `sessionStorage` 缓存 5min TTL |
+| R3 | `generateGameRecap()` 无降级 | 🟡 | 小 | AI 复盘失败时只显示一行文本。建议基于 `judgeHistory` 本地生成基础数据分析 |
+| R4 | 无 TypeScript strict 模式 | 🟢 | 小 | `tsconfig.json` `strict: false`，有潜在类型漏洞。开启后需修复约 20-30 处类型错误 |
+| R5 | 硬编码投降关键词 `["我认输", "我不知道"]` | 🟢 | 小 | 扩展到可配置的投降短语列表，或改为关键词包含匹配 |
+
+### 🎨 UI / 体验
+
+| # | 问题 | 优先级 | 难度 | 说明 |
+|---|------|--------|------|------|
+| U1 | 无移动端适配 | 🟠 | 中 | 群聊窗口和复盘页在小屏上布局混乱。建议添加 breakpoint 适配 + 底部输入框吸底 |
+| U2 | 无可访问性（a11y） | 🟡 | 中 | 无 ARIA 标签、无键盘导航、无屏幕阅读器支持。建议从 `role` 和 `aria-label` 开始 |
+| U3 | 复盘图表 SVG 无数据时空白 | 🟡 | 小 | `timeline.length <= 1` 时不渲染折线，但占位区域仍在。建议加空状态占位图 |
+| U4 | 无音效/震动反馈 | 🟢 | 小 | 暴露指数涨跌无感官反馈。可用 Web Audio API 加轻量音效或 `navigator.vibrate` |
+| U5 | 无黑暗模式切换——始终暗色 | 🟢 | 小 | 可加浅色主题作为备选，用 CSS 变量切换 |
+
+### 🔬 工程化
+
+| # | 问题 | 优先级 | 难度 | 说明 |
+|---|------|--------|------|------|
+| E1 | 零测试覆盖 | 🟠 | 中 | 无单元测试/集成测试。建议从 `judgeRound` 的分数计算逻辑和 `computeRecapStats` 开始加 vitest |
+| E2 | 无 CI/CD | 🟡 | 小 | 建议加 GitHub Actions：lint → typecheck → build |
+| E3 | `motion` 包体内含 `framer-motion` 残留 | 🟢 | 小 | node_modules 中两包共存。检查 `package-lock.json` 去重 |
+| E4 | 无 `CHANGELOG` / 版本号管理 | 🟢 | 小 | 建议用 `changesets` 或手动维护 |
+
+---
+
+### 如何贡献
+
+1. **Fork** 本仓库
+2. 从上面的问题列表中挑选一个，或自己发现新问题
+3. 开 Issue 讨论方案（避免重复劳动）
+4. 提交 PR，描述清楚改了什么问题、怎么改的
+5. 如果是 UI 改动，请用 `@Designer` 先加载 Open UI Scout skill 出方案再动手
+
+### 快速上手改动建议
+
+| 耗时 | 适合改什么 |
+|------|-----------|
+| 10 分钟 | A3 localStorage debounce、P3 粒子 useRef、R1 AbortController、R4 tsconfig strict |
+| 1 小时 | A4 ErrorBoundary、R2 topics 缓存、E2 CI/CD、U3 空状态 |
+| 半天 | A2 API 代理、U1 移动端适配、E1 单元测试 |
+| 1-2 天 | A1 组件拆分 + P2 memo、U2 a11y |
+
+---
+
+## 许可证 & 社区
+
+本项目基于 **MIT License** 开源。详见 [LICENSE](./LICENSE)。
+
+- 🐛 [报告 Bug](https://github.com/jiale-li-orion/FAKE/issues)
+- 💡 [提议新功能](https://github.com/jiale-li-orion/FAKE/issues)
+- 📖 [贡献指南](./CONTRIBUTING.md)
+- 🔒 隐私：本项目不收集任何用户数据，API Key 仅保存在浏览器本地 localStorage
+
+---
+
