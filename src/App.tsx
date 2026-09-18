@@ -20,7 +20,8 @@ import {
   Settings2
 } from 'lucide-react';
 import { Message, GameState, Difficulty, NPCPersonality, JudgeEntry, JudgeResult } from './types';
-import { generateGameStart, generateSingleNPCReply, judgeRound, generateGameRecap, generateTopics } from './services/ai';
+import { generateGameStart, generateGameRecap, generateTopics, startTurn, resetAdapter, toUserMessage } from './services/ai';
+import type { TurnMetrics, TurnPlan } from './services/ai';
 
 const INITIAL_STATE: GameState = {
   topic: '',
@@ -56,6 +57,15 @@ export default function App() {
   const [isTopicsLoading, setIsTopicsLoading] = useState(false);
   const [gameResult, setGameResult] = useState<'victory' | 'defeat' | null>(null);
   const [recapPage, setRecapPage] = useState(0);
+
+  // ── 流式增量渲染状态：npcId → 已到达的文本 ──
+  // 生成中的消息不进 state.messages，避免「半成品消息」被写进存档；
+  // 完成时才由 startTurn 的 promise 落地为正式消息。
+  const [streamingReplies, setStreamingReplies] = useState<Record<string, string>>({});
+  const [judgeThinking, setJudgeThinking] = useState(false);
+  const [turnMetrics, setTurnMetrics] = useState<TurnMetrics | null>(null);
+  const [showMetrics, setShowMetrics] = useState(false);
+  const activeTurnRef = useRef<TurnPlan | null>(null);
 
   // ── 复盘辅助函数 ──
   function computeSuspicionTimeline(history: JudgeEntry[]): { round: number; suspicion: number; change: number }[] {
@@ -161,9 +171,14 @@ export default function App() {
 
   const saveApiKeys = () => {
     localStorage.setItem('DEEPSEEK_API_KEY', tempDeepseekKey);
+    // 换 Key 后清掉适配器缓存，下一次请求立即用新 Key
+    resetAdapter();
     setShowApiKeySettings(false);
     setErrorMsg(null);
   };
+
+  // 卸载时取消仍在进行的整轮请求，避免悬空 setState
+  useEffect(() => () => activeTurnRef.current?.abort(), []);
 
   const startGame = async (diff: Difficulty = 'medium', theme?: string) => {
     setShowDifficultySelect(false);
@@ -221,8 +236,12 @@ export default function App() {
     if (!inputValue.trim() || state.status !== 'playing' || isTyping) return;
 
     const text = inputValue;
+    const currentRound = state.rounds + 1;
+    const difficulty = state.difficulty;
     setInputValue('');
     setIsTyping(true);
+    setJudgeThinking(false);
+    setStreamingReplies({});
 
     const playerMsg: Message = {
       id: `p-${Date.now()}`,
@@ -232,69 +251,85 @@ export default function App() {
       timestamp: new Date()
     };
 
-    // Show player message + round increment immediately
+    // 玩家消息立刻上屏，不等任何人
     setState(prev => ({ ...prev, messages: [...prev.messages, playerMsg], rounds: prev.rounds + 1 }));
 
+    const surrenderTexts = ['我认输', '我不知道'];
+    if (surrenderTexts.includes(text.trim())) {
+      const judge: JudgeResult = {
+        feedback: text.trim() === '我认输' ? '你自己先放弃了。' : '一句"不知道"暴露了一切。',
+        surrender: true,
+        breakdown: { belonging: 10, consistency: 10, presence: 10, bonus: 0 },
+      };
+      // 让玩家消息先渲染到 DOM，再进入 gameover 画面
+      await new Promise(r => setTimeout(r, 600));
+      const finalSuspicion = Math.min(100, state.suspicion + 50);
+      setState(prev => ({
+        ...prev,
+        suspicion: finalSuspicion,
+        lastJudge: judge,
+        judgeHistory: [...prev.judgeHistory, {
+          round: currentRound,
+          playerMessage: text,
+          feedback: judge.feedback,
+          suspicionChange: 50,
+          breakdown: judge.breakdown,
+        }],
+        status: 'gameover',
+      }));
+      setScorePopup({ change: 50, feedback: judge.feedback });
+      setTimeout(() => setScorePopup(null), 2500);
+      setGameResult('defeat');
+      setIsTyping(false);
+      return;
+    }
+
     try {
-      const currentRound = state.rounds + 1;
       const fullHistory = [...state.messages, playerMsg];
 
-      // ── 先评测：用上一轮 NPC 的发言来评估玩家本轮回应 ──
+      // Judge 参照上一轮 NPC 的发言 —— 因此它不必等本轮 NPC 生成完
       const prevNpcDialogue = state.messages
-        .filter((m: any) => m.role === 'expert' && m.npcId)
+        .filter(m => m.role === 'expert' && m.npcId)
         .slice(-4)
-        .map((m: any) => ({ npcId: m.npcId || '', content: m.content }));
+        .map(m => ({ npcId: m.npcId || '', content: m.content }));
 
-      const playerHistory = fullHistory
-        .filter((m: any) => m.role === 'player')
-        .slice(-5)
-        .map((m: any) => m.content)
-        .join('\n---\n');
+      // ── 同时启动 Judge 与 NPC 链 ──
+      const turn = startTurn({
+        playerMsg: text,
+        fullHistory,
+        prevNpcDialogue,
+        npcs: state.npcs,
+        topic: state.topic,
+        round: currentRound,
+        suspicion: state.suspicion,
+        difficulty,
+        onJudge: () => setJudgeThinking(false),
+        onNpcDelta: (_index, npcId, delta) => {
+          // 增量到达就拼进对应气泡：Token/Chunk 级增量渲染
+          setStreamingReplies(prev => ({ ...prev, [npcId]: (prev[npcId] || '') + delta }));
+        },
+      });
+      activeTurnRef.current = turn;
+      setJudgeThinking(true);
 
-      // ── 硬编码投降信号 ──
-      const surrenderTexts = ['我认输', '我不知道'];
-      let judge: JudgeResult;
-      let npcStepResults: Promise<{ npcId: string; content: string } | null>[] | null = null;
-      let shuffledNpcs: typeof state.npcs = [];
-      if (surrenderTexts.includes(text.trim())) {
-        judge = {
-          feedback: text.trim() === '我认输' ? '你自己先放弃了。' : '一句"不知道"暴露了一切。',
-          surrender: true,
-          breakdown: { belonging: 10, consistency: 10, presence: 10, bonus: 0 },
-        };
-        // 让玩家消息先渲染到 DOM，再进入 gameover 画面
-        await new Promise(r => setTimeout(r, 600));
-      } else {
-        // ── 并行启动 NPC 链（不等 judge，逐条可消费）──
-        shuffledNpcs = [...state.npcs].sort(() => Math.random() - 0.5).slice(0, 4);
-        npcStepResults = [];
-        let prevStep: Promise<string | null> = Promise.resolve(null);
-        for (let i = 0; i < shuffledNpcs.length; i++) {
-          const npc = shuffledNpcs[i];
-          const step = prevStep.then((prevContent) =>
-            generateSingleNPCReply(npc, '', currentRound, text, prevContent, fullHistory, state.difficulty)
-          ).then(content => ({ npcId: npc.id, content })).catch(() => null);
-          npcStepResults.push(step);
-          prevStep = step.then(r => r?.content ?? null);
-        }
+      // 两条路径并行推进：先到先算，互不阻塞
+      turn.metrics.then(setTurnMetrics).catch(() => undefined);
 
-        judge = await judgeRound(text, prevNpcDialogue, state.npcs, playerHistory, state.suspicion, currentRound, state.difficulty);
-      }
+      const judge = await turn.judge;
 
       // ── 从评审分数计算暴露指数增量（难度控制衰减/放大系数）──
       const b = judge.breakdown || { belonging: 5, consistency: 5, presence: 5, bonus: 0 };
-      const DIFF_WEIGHT = { easy: 0.3, medium: 0.5, hard: 2.0 }[state.difficulty];
+      const DIFF_WEIGHT = { easy: 0.3, medium: 0.5, hard: 2.0 }[difficulty];
       const avgScore = (b.belonging + b.consistency + b.presence) / 3;
       const suspicionIncrease = judge.surrender ? 50 : Math.round(avgScore * DIFF_WEIGHT + (b.bonus || 0));
 
       const finalSuspicion = Math.max(0, Math.min(100, state.suspicion + suspicionIncrease));
 
-      // ── 独立游戏结束判定 ──
       const VICTORY = {
         easy:   { requiredRounds: 8  },
         medium: { requiredRounds: 10 },
         hard:   { requiredRounds: 10 },
-      }[state.difficulty];
+      }[difficulty];
 
       const isLoss = judge.surrender || finalSuspicion >= 100;
       const isWin = !isLoss && currentRound >= VICTORY.requiredRounds;
@@ -316,40 +351,50 @@ export default function App() {
         status: isLoss || isWin ? 'gameover' : 'playing'
       }));
 
-      // ── 立刻显示评测弹窗 ──
       setScorePopup({ change: suspicionIncrease, feedback: judge.feedback });
       setTimeout(() => setScorePopup(null), 2500);
 
-      // 如果游戏结束，不再生成 NPC 回复
-      if (isLoss || isWin) return;
+      if (isLoss || isWin) {
+        // 游戏已结束，本轮 NPC 不必再生成，避免浪费额度
+        turn.abort();
+        setStreamingReplies({});
+        setIsTyping(false);
+        return;
+      }
 
-      // NPC 逐条显示 —— 每条生成完就显示，不等全部完成
-      if (npcStepResults) {
-        for (let i = 0; i < npcStepResults.length; i++) {
-          const result = await npcStepResults[i];
-          if (result) {
-            const npc = shuffledNpcs[i];
-            const npcMsg: Message = {
-              id: `npc-${Date.now()}-${i}`,
-              role: 'expert' as const,
-              author: npc.name,
-              content: result.content,
-              timestamp: new Date(),
-              npcId: npc.id,
-            };
-            setState(prev => ({ ...prev, messages: [...prev.messages, npcMsg] }));
-          }
-          if (i < npcStepResults.length - 1) {
-            await new Promise(r => setTimeout(r, 800 + Math.random() * 400));
-          }
+      // ── NPC 回复逐条落地：每条第 i 条生成完就接上，不等整条链 ──
+      for (let i = 0; i < turn.npcReplies.length; i++) {
+        let result: Awaited<(typeof turn.npcReplies)[number]> | null = null;
+        try {
+          result = await turn.npcReplies[i];
+        } catch {
+          result = null;
         }
+        setStreamingReplies(prev => {
+          if (!(result && result.npcId in prev)) return prev;
+          const next = { ...prev };
+          delete next[result.npcId];
+          return next;
+        });
+        if (!result?.content) continue;
+
+        const npcMsg: Message = {
+          id: `npc-${result.npcId}-${currentRound}`,
+          role: 'expert',
+          author: turn.npcs[i]?.name || result.npcId,
+          content: result.content,
+          timestamp: new Date(),
+          npcId: result.npcId,
+        };
+        setState(prev => ({ ...prev, messages: [...prev.messages, npcMsg] }));
       }
 
     } catch (error) {
       console.error("Turn failed:", error);
       setInputValue(text);
-      setErrorMsg("学术委员会暂时失联（AI 请求错误）。请检查 API Key 额度或稍后重试。");
+      setErrorMsg(toUserMessage(error));
     } finally {
+      setJudgeThinking(false);
       setIsTyping(false);
     }
   };
@@ -1009,6 +1054,22 @@ export default function App() {
               </div>
             </div>
 
+            {/* 运行时指标：并发调度与流式的实际效果，不必靠猜 */}
+            {turnMetrics && (
+              <button
+                onClick={() => setShowMetrics(v => !v)}
+                title="查看本轮调度指标"
+                className="hidden md:flex flex-col items-center group"
+              >
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-none mb-1 group-hover:text-slate-400">
+                  首字延迟
+                </p>
+                <span className="text-sm font-mono font-bold text-cyan-300/80 group-hover:text-cyan-300">
+                  {(turnMetrics.ttftMs / 1000).toFixed(1)}s
+                </span>
+              </button>
+            )}
+
           <div className="block">
             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">面具完整度</p>
             <div className={`w-24 sm:w-48 h-2 rounded-full overflow-hidden border transition-all duration-500 ${
@@ -1212,9 +1273,46 @@ export default function App() {
               </div>
             </motion.div>
           ))}
+
+          {/* 生成中的 NPC 气泡：流式增量直接拼进气泡，不等整条回复 */}
+          {Object.entries(streamingReplies).map(([npcId, content]) => {
+            const npc = getNpc(npcId);
+            return (
+              <motion.div
+                key={`stream-${npcId}`}
+                initial={{ opacity: 0, x: -20, y: 10 }}
+                animate={{ opacity: 1, x: 0, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="flex gap-4 max-w-3xl mr-auto"
+              >
+                <div className={`flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center border text-base font-bold ${getNpcColor(npcId)}`}>
+                  {npc?.name?.[0] || '?'}
+                </div>
+                <div className="space-y-1 text-left">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-bold text-base text-slate-200">{npc?.name || npcId}</span>
+                    <span className="text-[10px] text-slate-500 font-mono animate-pulse">生成中…</span>
+                  </div>
+                  <div className="p-4 rounded-2xl text-base leading-relaxed bg-slate-900 border border-emerald-500/20 text-slate-100 rounded-tl-none">
+                    {content}
+                    <span className="inline-block w-[2px] h-[1em] bg-emerald-400 align-middle ml-0.5 animate-pulse" />
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
         </AnimatePresence>
 
-        {isTyping && (
+        {/* 评审在另一条路径上同时跑，这里只显示它尚未返回 */}
+        {isTyping && judgeThinking && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="flex items-center gap-2 pl-1">
+            <span className="w-1.5 h-1.5 bg-violet-400/70 rounded-full animate-pulse" />
+            <span className="text-[11px] text-slate-500 font-mono tracking-wide">评审正在观察这一轮…</span>
+          </motion.div>
+        )}
+
+        {isTyping && Object.keys(streamingReplies).length === 0 && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-4">
             <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center animate-pulse">
               <CircleUser className="w-5 h-5 text-slate-600" />
@@ -1866,6 +1964,44 @@ export default function App() {
 
       {/* Glossary Modal */}
       <AnimatePresence>
+      </AnimatePresence>
+
+      {/* 调度指标详情 */}
+      <AnimatePresence>
+        {showMetrics && turnMetrics && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="fixed top-24 right-6 z-50 w-72 bg-slate-900/95 border border-cyan-500/20 rounded-2xl p-4 backdrop-blur-xl shadow-2xl"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[10px] uppercase tracking-widest font-bold text-cyan-400/80 font-mono">
+                Turn Runtime
+              </span>
+              <button onClick={() => setShowMetrics(false)}
+                className="text-slate-500 hover:text-slate-300 text-xs font-mono">✕</button>
+            </div>
+            <div className="space-y-1.5 font-mono text-[11px]">
+              {[
+                { k: '首字延迟 TTFT', v: `${Math.round(turnMetrics.ttftMs)}ms` },
+                { k: '整轮墙钟', v: `${Math.round(turnMetrics.totalMs)}ms` },
+                { k: 'Judge 耗时', v: `${Math.round(turnMetrics.judgeMs)}ms` },
+                { k: 'NPC 链耗时', v: `${Math.round(turnMetrics.npcChainMs)}ms` },
+                { k: '并发重叠', v: `${Math.round(turnMetrics.overlapMs)}ms` },
+                { k: '乱序分片', v: `${turnMetrics.outOfOrderChunks}` },
+              ].map(row => (
+                <div key={row.k} className="flex items-center justify-between">
+                  <span className="text-slate-500">{row.k}</span>
+                  <span className="text-slate-200">{row.v}</span>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 pt-2 border-t border-white/5 text-[10px] text-slate-600 leading-relaxed">
+              整轮墙钟 ≈ max(Judge, NPC 链)。串行等待的耗时等于两者之和。
+            </p>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );

@@ -1,18 +1,23 @@
 /**
  * 困难模式生存示范
  * 用一个"身份构造大师"AI 玩家模拟活过困难模式 10 轮
+ *
+ * 与浏览器端走同一套 runtime（startTurn）：Judge 与 NPC 链并发调度、
+ * 流式增量消费、每轮指标埋点都在这里生效。区别只是渲染层 ——
+ * 这里把增量打到 stdout，浏览器里打到气泡。
+ *
+ * 运行：DEEPSEEK_API_KEY=sk-xxx npx tsx survival_demo.ts
  */
 
-import { generateGameStart, generateSingleNPCReply, judgeRound, generateGameRecap } from './src/services/ai';
+import { generateGameStart, startTurn, generateGameRecap } from './src/services/ai';
+import type { TurnMetrics } from './src/services/ai';
 import { Message, Difficulty, NPCPersonality } from './src/types';
 import OpenAI from 'openai';
 
 const DIFF: Difficulty = 'hard';
 const REQUIRED_ROUNDS = 10;
-const DEEPSEEK_KEY = () => {
-  if (typeof window !== 'undefined') return '';
-  return process.env.DEEPSEEK_API_KEY || '';
-};
+const DIFF_WEIGHT = 2.0;
+const DEEPSEEK_KEY = () => process.env.DEEPSEEK_API_KEY || '';
 
 // ── "完美玩家" AI 引擎 ──
 async function perfectPlayer(npcDialogue: string[], history: string, topic: string, field: string, rounds: number): Promise<string> {
@@ -105,22 +110,33 @@ async function main() {
     messages.push(playerMsg);
     transcript += `### 你（身份流亡者）\n> ${playerText}\n\n`;
 
-    // ── 3b. 评审 ──
+    // ── 3b. 评审 + NPC 链并发调度 ──
     const prevNpcDialogue = messages
       .filter(m => m.role === 'expert' && m.npcId)
       .slice(-4)
       .map(m => ({ npcId: m.npcId || '', content: m.content }));
 
-    const playerHistory = messages
-      .filter(m => m.role === 'player')
-      .slice(-5)
-      .map(m => m.content)
-      .join('\n---\n');
+    const turn = startTurn({
+      playerMsg: playerText,
+      fullHistory: messages,
+      prevNpcDialogue,
+      npcs,
+      topic,
+      round,
+      suspicion,
+      difficulty: DIFF,
+      onNpcDelta: (index, npcId, delta) => {
+        // 流式增量直接落到 stdout，无需等整条回复
+        process.stdout.write(`\r🤖 [${npcId}] ${delta.replace(/\n/g, ' ')}`);
+      },
+    });
 
-    const judge = await judgeRound(playerText, prevNpcDialogue, npcs, playerHistory, suspicion, round, DIFF);
+    const judge = await turn.judge;
+    const roundMetrics = await turn.metrics;
+    process.stdout.write('\n');
+    console.log(`⏱  本轮 TTFT ${Math.round(roundMetrics.ttftMs)}ms | 总耗时 ${Math.round(roundMetrics.totalMs)}ms | Judge ${Math.round(roundMetrics.judgeMs)}ms | NPC链 ${Math.round(roundMetrics.npcChainMs)}ms | 重叠 ${Math.round(roundMetrics.overlapMs)}ms`);
 
     const b = judge.breakdown || { belonging: 5, consistency: 5, presence: 5, bonus: 0 };
-    const DIFF_WEIGHT = 2.0;
     const avgScore = (b.belonging + b.consistency + b.presence) / 3;
     const suspicionIncrease = judge.surrender ? 50 : Math.round(avgScore * DIFF_WEIGHT + (b.bonus || 0));
     suspicion = Math.max(0, Math.min(100, suspicion + suspicionIncrease));
@@ -143,6 +159,7 @@ async function main() {
 
     // ── 失败检查 ──
     if (suspicion >= 100 || judge.surrender) {
+      turn.abort(); // 结局已定，不必再生成本轮 NPC
       console.log(`\n💀 第 ${round} 轮暴露! 暴露指数: ${suspicion}%`);
       transcript += `> 💀 **身份崩解，流亡失败。**\n\n`;
       transcript += `---\n\n## 结局：流亡失败\n\n`;
@@ -150,28 +167,29 @@ async function main() {
       break;
     }
 
-    // ── 3c. 生成 NPC 回复 ──
-    const dialogue: { npcId: string; content: string }[] = [];
-    const shuffled = [...npcs].sort(() => Math.random() - 0.5).slice(0, 4);
+    // ── 3c. 收下 NPC 回复（链内串行，逐条落地）──
+    for (let i = 0; i < turn.npcReplies.length; i++) {
+      let reply: Awaited<(typeof turn.npcReplies)[number]> | null = null;
+      try {
+        reply = await turn.npcReplies[i];
+      } catch {
+        reply = null;
+      }
+      if (!reply) continue;
 
-    for (let i = 0; i < shuffled.length; i++) {
-      const npc = shuffled[i];
-      const prevContent = i > 0 ? dialogue[i - 1].content : null;
-      const content = await generateSingleNPCReply(npc, topic, round, playerText, prevContent, messages, DIFF);
-      dialogue.push({ npcId: npc.id, content });
-
+      const npc = turn.npcs[i];
       const npcMsg: Message = {
-        id: `npc-${Date.now()}-${i}`,
+        id: `npc-${reply.npcId}-${round}`,
         role: 'expert' as const,
-        author: npc.name,
-        content,
+        author: npc?.name || reply.npcId,
+        content: reply.content,
         timestamp: new Date(),
-        npcId: npc.id,
+        npcId: reply.npcId,
       };
       messages.push(npcMsg);
 
-      console.log(`🤖 ${npc.name}: ${content}`);
-      transcript += `### ${npc.name}\n> ${content}\n\n`;
+      console.log(`🤖 ${npcMsg.author} (首字 ${Math.round(reply.visibleInMs)}ms / 共 ${Math.round(reply.totalMs)}ms): ${reply.content}`);
+      transcript += `### ${npcMsg.author}\n> ${reply.content}\n\n`;
     }
 
     // ── 胜利检查 ──
