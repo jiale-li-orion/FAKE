@@ -1,5 +1,4 @@
 import { defineConfig } from 'vitest/config';
-import react from '@vitejs/plugin-react';
 import path from 'path';
 
 /**
@@ -10,7 +9,11 @@ import path from 'path';
  * 混在一起会让 L1 的测试无谓地承担 jsdom 的启动开销与差异。
  */
 export default defineConfig({
-  plugins: [react()],
+  // 测试环境不需要 @vitejs/plugin-react 提供的 Fast Refresh 与 HMR，
+  // 而它对 2000 行的 App.tsx 走 babel 转换，在 WSL 挂载盘上冷启动
+  // 会拖到超过 vitest 硬编码的 60s worker 就绪上限（START_TIMEOUT）。
+  // esbuild 转 JSX 足够，且快一个量级。
+  esbuild: { jsx: 'automatic', jsxImportSource: 'react' },
   resolve: {
     alias: { '@': path.resolve(__dirname, '.') },
   },
@@ -30,9 +33,22 @@ export default defineConfig({
         // ── L4/L5：组件与渲染层，jsdom 环境 ──
         // 组件测试含 JSX，故同时匹配 .ts 与 .tsx
         extends: true,
+        resolve: {
+          alias: {
+            '@': path.resolve(__dirname, '.'),
+            // jsdom 无动画引擎，`motion` 的模块图只会拖慢 worker 启动。
+            // 替换为同语义替身，见 tests/stubs/motion-react.tsx
+            'motion/react': path.resolve(__dirname, 'tests/stubs/motion-react.tsx'),
+          },
+        },
         test: {
           name: 'dom',
-          environment: 'jsdom',
+          // 用 happy-dom 而非 jsdom：jsdom 在这台机器的 WSL 挂载盘上
+          // `require()` 就要 73 秒（实测，磁盘 I/O 受限），超过 vitest
+          // 源码里硬编码的 60 秒 worker 就绪上限（START_TIMEOUT，不可配置）。
+          // happy-dom 实测 39 秒，可容纳。换到正常文件系统的机器上，
+          // jsdom 兼容性更好，可换回。
+          environment: 'happy-dom',
           include: ['tests/**/*.dom.test.{ts,tsx}'],
           setupFiles: ['tests/setup.dom.ts'],
           // jsdom + React 19 + motion 的模块图较大，在 WSL 挂载盘上

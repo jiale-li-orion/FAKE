@@ -11,16 +11,17 @@
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "vitest run --project unit",
+    "test": "vitest run --project unit --project dom",
     "test:watch": "vitest --project unit",
     "test:dom": "vitest run --project dom",
-    "test:all": "vitest run",
+    "test:all": "vitest run --project unit --project dom",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "inspect:sse": "tsx tools/sse-inspect-cli.ts",
     "capture:sse": "tsx tools/sse-capture-proxy.ts",
-    "bench:turn": "tsx tools/bench-turn.ts"
+    "bench:turn": "tsx tools/bench-turn.ts",
+    "test:unit": "vitest run --project unit"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
@@ -44,6 +45,7 @@
     "@vitest/coverage-v8": "^5.0.1",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
+    "happy-dom": "^20.14.5",
     "jsdom": "^30.1.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
