@@ -17,10 +17,9 @@
 npm install
 
 # 2. 配置 API Key（任选一种）
-#    方式 A：在浏览器中设置（游戏内 API 配置面板）
+#    方式 A：在浏览器中设置（游戏内 API 配置面板，推荐）
 #    方式 B：创建 .env 文件
 echo 'DEEPSEEK_API_KEY="sk-xxx"' > .env
-echo 'GEMINI_API_KEY="xxx"' >> .env
 
 # 3. 启动开发模式（热重载，无需预构建）
 npm run dev
@@ -30,7 +29,66 @@ npm run dev
 npm run build && npm start
 ```
 
-> **API 说明**：默认使用 DeepSeek API（快速、稳定），不可用时自动降级至 Gemini。至少配置一个即可使用全部功能。
+> **API 说明**：全部推理走 DeepSeek（OpenAI 兼容接口）。只需配置一个 `DEEPSEEK_API_KEY` 即可使用全部功能。
+> 密钥只存在浏览器 localStorage，随请求直接发往 DeepSeek，不经过任何第三方。
+
+---
+
+## 运行时架构
+
+这一节说明「一轮对话到底是怎么跑完的」——它决定了等待感是 3 秒还是 15 秒。
+
+### 一轮 = Judge ∥ NPC 链
+
+```
+        ┌── judge ────────────────────────────┐
+   t0 ──┤                                     ├──→ 各自落地
+        └── npc0 → npc1 → npc2 → npc3 ────────┘
+              ↑        ↑       ↑       ↑
+           逐条流式输出，每条生成完立即上屏
+```
+
+- **Judge 与 NPC 链之间没有数据依赖**：Judge 评判的是「玩家本轮发言 + 上一轮 NPC 发言」，
+  因此它从第一轮起就与 NPC 链完全重叠。整轮墙钟时间 ≈ `max(Judge, NPC 链)`，
+  而不是两者相加。
+- **NPC 链内部必须串行**：第 i 个 NPC 要先看到第 i-1 个说了什么才能接话。
+  这是产品语义，不是实现偷懒——群聊里后发言的人本来就听过前面的。
+  链内每个节点在等待前序时不会阻塞 Judge。
+
+### 流式增量渲染
+
+- NPC 回复走 SSE 流式（`stream: true`），**Token/Chunk 级**增量直接拼进气泡，
+  不等整条回复生成完再上屏。
+- 生成中的消息单独放在 `streamingReplies` 里，**不写入 `state.messages`**——
+  避免半成品被持久化进存档、或被复盘逻辑当成完整发言。
+  整条回复生成完成后，才落地为正式消息并写入 localStorage。
+- Judge 在另一条路径上推进，UI 只显示「评审正在观察这一轮…」，
+  不会为了等 Judge 而卡住 NPC 的显示。
+
+### 消费顺序守卫
+
+供应商的流式分片会出现「生成顺序 / 完成顺序 / 消费顺序」不一致
+（后发分片先到、usage-only 空 delta 帧、一次 SSE 事件塞多条 `data:` 行）。
+`src/services/stream.ts` 用纯函数处理这类情况：
+
+- `ChunkOrderGuard`：按生成序位缓冲。乱序分片被挂起而不是直接拼接，
+  保证最终文本等于生成顺序的文本；前序丢帧时由 `flush()` 兜底放行，
+  不会永久阻塞（否则玩家会看到消息卡死）。
+- `SequencedConsumer`：按 SSE 事件出现顺序编号并统计乱序分片数，供指标面板展示。
+- `parseJsonLoose`：剥掉 ```` ```json ```` 围栏、BOM、前后多余话术，围栏未配平时截取最外层大括号。
+
+这些都是纯函数，因此能在不打真实 API 的前提下写回归测试（见 `tests/stream.test.ts`）。
+
+### 指标埋点
+
+每轮记录：首字延迟（TTFT）、整轮墙钟、Judge 耗时、NPC 链耗时、两者重叠时间、乱序分片数。
+游戏页头部显示「首字延迟」，点击可展开完整指标。
+
+这些数字是「模型推理占用户感知等待比例」这类结论的唯一依据——不埋点就只能靠猜。
+
+```bash
+npm test        # 流式解码层回归测试（16 项）
+```
 
 ---
 
@@ -52,7 +110,7 @@ npm run build && npm start
 
 ### 第二步：配置 AI 引擎
 
-点击 **API 配置** 展开面板，填入你的 DeepSeek 或 Gemini API Key。密钥仅保存在浏览器本地，不会上传。
+点击 **API 配置** 展开面板，填入你的 DeepSeek API Key。密钥仅保存在浏览器本地，不会上传。
 
 ### 第三步：选择话题
 
@@ -142,58 +200,84 @@ npm run build && npm start
 
 ```
 src/
-├── App.tsx              # 全部 UI 和游戏流程（~1420 行）
+├── App.tsx              # UI 与游戏流程
 ├── types.ts             # TypeScript 类型定义
 ├── services/
-│   └── ai.ts            # 全部 AI 引擎（NPC、评测、开场、复盘）
+│   ├── ai.ts            # Agent 运行时：并发调度、流式消费、指标埋点
+│   ├── llm.ts           # LLM 适配层：配置、连通性探测、流式/非流式调用
+│   ├── stream.ts        # 纯函数流式解码：顺序守卫、分片解析、JSON 容错
+│   └── prompts.ts       # 提示词资产：人格、群聊规则、评分维度、复盘模板
 ├── main.tsx             # React 渲染入口
 └── index.css            # Tailwind CSS 入口
+tests/
+└── stream.test.ts       # 流式解码层回归测试
 server.ts                # Express 静态文件服务器 / Vite 开发代理
+survival_demo.ts         # 离线跑批：AI 玩家自动打 10 轮，输出 生存典范.md
 index.html               # HTML 入口
 ```
+
+分层原则：`prompts.ts` 是产品表达，`stream.ts` 是纯函数，`llm.ts` 是供应商适配，
+`ai.ts` 是调度。改人格不会碰到流式代码，改流式不会碰到提示词。
 
 ### 关键函数速查（ai.ts）
 
 | 函数 | 用途 |
 |------|------|
+| `startTurn(input)` | **一轮的调度入口**。返回 `TurnPlan`：Judge 与 NPC 链两条 promise 路径、逐条可消费、可 abort |
 | `generateGameStart(difficulty, customTheme)` | 生成话题、NPC 名字、开场闲聊 |
-| `generateSingleNPCReply(npc, topic, round, playerMsg, prevContent, history, difficulty)` | 串行生成单个 NPC 回复 |
-| `judgeRound(playerMsg, npcDialogue, npcs, playerHistory, currentSuspicion, round, difficulty)` | 身份审判——三维评分 + 暴露指数变动 |
-| `generateGameRecap(field, topic, rounds, finalSuspicion, messages, npcs, judgeHistory)` | 游戏结束复盘报告 |
+| `judgeRound(params)` | 身份审判——三维评分 + 暴露指数变动 |
+| `generateGameRecap(...)` | 游戏结束复盘报告 |
 | `generateTopics()` | LLM 动态生成 6 类 12 个话题 |
+| `profileNameOf(npcId)` | 查人格原型名 |
+
+### 关键类型速查（ai.ts）
+
+| 类型 | 说明 |
+|------|------|
+| `TurnPlan` | `judge` / `npcReplies[]` / `metrics` / `abort` |
+| `TurnMetrics` | `ttftMs` `totalMs` `judgeMs` `npcChainMs` `overlapMs` `outOfOrderChunks` |
+| `StreamMetrics` | 单条消息：`ttftMs` `totalMs` `chunks` `visibleInMs` |
 
 ### Prompt 体系
 
-所有 prompt 位于 `src/services/ai.ts`：
+所有 prompt 位于 `src/services/prompts.ts`：
 
-| Prompt | 位置 | 说明 |
-|--------|------|------|
-| `NPC_PROFILES` | 第 15-40 行 | 4 个 NPC 人格描述 |
-| `INTERACTION_RULES` | 第 206-234 行 | 8 条群聊行为规则 |
-| `DISCUSSION_PROTOCOL` | 第 237-267 行 | 7 条深度讨论约束 |
-| `buildNPCPrompt()` | 第 270-298 行 | 拼接 NPC prompt（规则 → 人格 → 协议 → 上下文） |
-| `judgeRound` prompt | 第 340-409 行 | 身份审判——场景感知 → 圈内感/身份自洽/存在感 → 分数计算 |
+| Prompt | 说明 |
+|--------|------|
+| `NPC_PROFILES` | 4 个 NPC 人格描述 |
+| `INTERACTION_RULES` | 8 条群聊行为规则 |
+| `DISCUSSION_PROTOCOL` | 7 条深度讨论约束 |
+| `buildNPCPrompt()` | 拼接 NPC prompt（规则 → 人格 → 协议 → 上下文） |
+| `buildJudgePrompt()` | 身份审判——场景感知 → 圈内感/身份自洽/存在感 → 分数计算 |
+| `buildStartPrompt()` / `TOPICS_PROMPT` / `buildRecapPrompt()` | 开场、话题池、复盘 |
+
 
 ---
 
 ## 调优指南
 
 ### 想让游戏更简单？
-- `ai.ts` → 降低 `DIFF_VICTORY` 中的暴露指数阈值
-- `ai.ts` → 调整 `judgeRound` prompt 中的加分项幅度（`-5~0` → `-8~0`）
+- `App.tsx` → 降低 `VICTORY` 中的存活轮次要求
+- `App.tsx` → 调小 `DIFF_WEIGHT`
 
 ### 想让游戏更难？
-- `ai.ts` → 提高 `DIFF_VICTORY` 阈值
-- `ai.ts` → 缩小加分项幅度
+- `App.tsx` → 提高 `VICTORY.requiredRounds`
+- `App.tsx` → 调大 `DIFF_WEIGHT`
 
 ### 想调整 NPC 性格？
-- `NPC_PROFILES` 数组（第 15-40 行）：修改人格描述
-- `INTERACTION_RULES`（第 206-234 行）：修改群聊行为规则
-- `DISCUSSION_PROTOCOL`（第 237-267 行）：修改讨论深度约束
+- `prompts.ts` → `NPC_PROFILES`：人格描述
+- `prompts.ts` → `INTERACTION_RULES`：群聊行为规则
+- `prompts.ts` → `DISCUSSION_PROTOCOL`：讨论深度约束
 
 ### 想改变评分维度？
-- `judgeRound` prompt（第 340 行起）：修改评分维度、权重、加分逻辑
+- `prompts.ts` → `buildJudgePrompt()`：评分维度、权重、加分逻辑
 - `types.ts` 的 `JudgeResult.breakdown`：同步更新字段
+- `App.tsx` 的 `DIFF_WEIGHT` / `VICTORY`：同步分数到暴露指数的映射
+
+### 想换模型 / 换服务商？
+- 模型名：`src/services/llm.ts` 的 `DEFAULT_MODEL`
+- 也可在浏览器 localStorage 用 `DEEPSEEK_BASE_URL` / `DEEPSEEK_MODEL` 覆盖
+- 只要服务商兼容 OpenAI 的 `/chat/completions`（含 `stream: true`），无需改代码
 
 ---
 
@@ -205,7 +289,7 @@ index.html               # HTML 入口
 | 构建 | Vite 6 |
 | 样式 | Tailwind CSS 4 |
 | 动画 | Motion (ex-Framer Motion) |
-| AI SDK | OpenAI SDK (DeepSeek) + Google GenAI (Gemini) |
+| AI SDK | OpenAI SDK（指向 DeepSeek 的 OpenAI 兼容接口） |
 | 图标 | Lucide React |
 | 服务端 | Express (静态文件 + Vite 中间件) |
 
@@ -215,57 +299,60 @@ index.html               # HTML 入口
 
 欢迎提交 PR 共同优化。以下列出目前已知的架构漏洞、性能瓶颈和功能缺陷，标注了优先级（🔴严重 🟠高 🟡中 🟢低）和修复难度。
 
+> **已解决（本轮迭代）**：A7 NPC 链与 Judge 的串行等待已改为并发调度；P1 的「串行链累计 ~10.8s」已由流式增量渲染消除大半——首字出现即可读，不再等整条链跑完；R1 已加入统一超时（45s）、AbortController 与 JSON 解析兜底；**D1 流式挂起导致 UI 永久锁死已修复**（根因是 SDK 的超时覆盖不到流式迭代，详见 [`docs/stream-stall-bug.md`](./stream-stall-bug.md)）；E1 已有 58 项分层测试，含「用已知根因验证判定工具」的元测试。
+> 下面保留原始条目以便追溯，并在状态列标注。
+
 ### 🏗 架构
 
-| # | 问题 | 优先级 | 难度 | 说明 |
-|---|------|--------|------|------|
-| A1 | 单体 `App.tsx` （1900+ 行）无组件拆分 | 🔴 | 大 | 状态、渲染、逻辑全部耦合，每次 `setState` 重跑全部代码。建议拆分为 `HomePage` / `GamePage` / `GameOverPage` |
-| A2 | API Key 纯前端明文传输 | 🟠 | 中 | `dangerouslyAllowBrowser: true`，XSS 下可被窃取。建议通过 Express 后端代理 API 请求 |
-| A3 | `localStorage` 每次 `setState` 同步写盘 | 🟠 | 小 | 每轮 5+ 次 `JSON.stringify` + `setItem` 阻塞主线程。建议用 `useRef` + debounce 1s 写入 |
-| A4 | 无 Error Boundary | 🟠 | 小 | 任何未捕获异常直接白屏。建议在 `main.tsx` 包裹 `<ErrorBoundary>` |
-| A5 | 消息数组无限增长无裁剪 | 🟡 | 小 | 20 轮后 DOM 节点 100+，滚动变慢。建议只渲染最近 50 条，完整历史存 `useRef` |
-| A6 | 游戏状态无迁移策略 | 🟡 | 小 | `localStorage` 的 `fakeExpert_save` 格式变更后旧存档会崩溃。建议加 `version` 字段 |
-| A7 | NPC 链串行依赖 `prevContent` | 🟡 | 大 | 4 个 NPC 必须串行生成（每个需要上一个的回复），已与 judge 并行但链内无法再加速 |
+| # | 问题 | 优先级 | 难度 | 状态 | 说明 |
+|---|------|--------|------|------|------|
+| A1 | 单体 `App.tsx` 无组件拆分 | 🔴 | 大 | 待办 | 状态、渲染、逻辑全部耦合，每次 `setState` 重跑全部代码。建议拆出 `HomePage` / `GamePage` / `GameOverPage` |
+| A2 | API Key 纯前端明文传输 | 🟠 | 中 | 待办 | `dangerouslyAllowBrowser: true`，XSS 下可被窃取。建议通过 Express 后端代理 API 请求 |
+| A3 | `localStorage` 每次 `setState` 同步写盘 | 🟠 | 小 | 待办 | 每轮 5+ 次 `JSON.stringify` + `setItem` 阻塞主线程。建议用 `useRef` + debounce 1s 写入 |
+| A4 | 无 Error Boundary | 🟠 | 小 | 待办 | 任何未捕获异常直接白屏。建议在 `main.tsx` 包裹 `<ErrorBoundary>` |
+| A5 | 消息数组无限增长无裁剪 | 🟡 | 小 | 待办 | 20 轮后 DOM 节点 100+。建议只渲染最近 50 条，完整历史存 `useRef` |
+| A6 | 游戏状态无迁移策略 | 🟡 | 小 | 待办 | `fakeExpert_save` 格式变更后旧存档会崩溃。建议加 `version` 字段 |
+| A7 | ~~NPC 链串行依赖 `prevContent`~~ | 🟡 | 大 | ✅ 已并发 | Judge 与 NPC 链已完全重叠（`judgeMs` / `npcChainMs` / `overlapMs` 可在指标面板核对）。链内串行是产品语义，保留 |
 
 ### ⚡ 性能
 
-| # | 问题 | 优先级 | 难度 | 说明 |
-|---|------|--------|------|------|
-| P1 | 模型推理占用户感知等待的 ~95% | 🔴 | 大 | flash 单次 ~2.7s，串行链累计 ~10.8s + 显示间隔 ~3s。可探索流式输出、更小模型、缓存常见回复 |
-| P2 | 零 `React.memo` / `useMemo` / `useCallback` | 🟠 | 大 | 每次键盘输入都重跑 1900 行 JS。建议拆分组件后对 `MessageList`、`ParticleBg` 等加 memo |
-| P3 | 60 颗粒子的随机位置每次渲染重新 `Math.random()` | 🟡 | 小 | 打字时不断重算 60 个 inline style。建议移入 `useRef` 仅挂载时生成一次 |
-| P4 | 多处 `backdrop-filter: blur()` 叠加 | 🟡 | 小 | header、footer、rules card、glow orbs 同时 blur，GPU 合成层开销大。可用半透明背景替代装饰性 blur |
-| P5 | `AnimatePresence` + `layout` 动画在消息列表上 | 🟡 | 中 | 每条新消息触发 FLIP 计算。建议移除消息气泡的 `layout` prop，仅保留 `initial/animate` |
-| P6 | Tailwind v4 全量 class 扫描 | 🟢 | 小 | 首次编译扫描 1900 行 JSX。升级到 Tailwind v4.1+ 的 JIT 或配置 `content` 限制范围 |
+| # | 问题 | 优先级 | 难度 | 状态 | 说明 |
+|---|------|--------|------|------|------|
+| P1 | 模型推理占用户感知等待的 ~95% | 🔴 | 大 | ✅ 部分解决 | 流式增量渲染已把「首字等待」从「整条链跑完」降到「首个 chunk 到达」。剩余等待是模型首字延迟本身，只能靠更小模型或缓存继续压缩 |
+| P2 | 零 `React.memo` / `useMemo` / `useCallback` | 🟠 | 大 | 待办 | 每次键盘输入都重跑整个 `App`。建议拆分组件后对 `MessageList`、`ParticleBg` 加 memo |
+| P3 | 60 颗粒子的随机位置每次渲染重新 `Math.random()` | 🟡 | 小 | 待办 | 打字时不断重算 60 个 inline style。建议移入 `useRef` 仅挂载时生成一次 |
+| P4 | 多处 `backdrop-filter: blur()` 叠加 | 🟡 | 小 | 待办 | header、footer、rules card、glow orbs 同时 blur，GPU 合成层开销大 |
+| P5 | `AnimatePresence` + `layout` 动画在消息列表上 | 🟡 | 中 | 待办 | 每条新消息触发 FLIP 计算。建议移除消息气泡的 `layout` prop |
+| P6 | 流式增量触发高频 `setState` | 🟡 | 中 | 待办 | 每个 chunk 一次 `setState`，长回复会连续触发渲染。建议按 ~16ms 批量合并增量后再刷 |
 
 ### 🛡 健壮性
 
-| # | 问题 | 优先级 | 难度 | 说明 |
-|---|------|--------|------|------|
-| R1 | API 调用无统一超时/重试 | 🟠 | 小 | judge 评审 JSON 解析失败只重试 1 次，二次失败直接崩。建议加 AbortController(15s) + 兜底默认值 |
-| R2 | `generateTopics()` 无缓存 | 🟡 | 小 | 每次点击重复调用 LLM，浪费 API 额度。建议 `sessionStorage` 缓存 5min TTL |
-| R3 | `generateGameRecap()` 无降级 | 🟡 | 小 | AI 复盘失败时只显示一行文本。建议基于 `judgeHistory` 本地生成基础数据分析 |
-| R4 | 无 TypeScript strict 模式 | 🟢 | 小 | `tsconfig.json` `strict: false`，有潜在类型漏洞。开启后需修复约 20-30 处类型错误 |
-| R5 | 硬编码投降关键词 `["我认输", "我不知道"]` | 🟢 | 小 | 扩展到可配置的投降短语列表，或改为关键词包含匹配 |
+| # | 问题 | 优先级 | 难度 | 状态 | 说明 |
+|---|------|--------|------|------|------|
+| R1 | ~~API 调用无统一超时/重试~~ | 🟠 | 小 | ✅ 已解决 | 统一 45s 超时 + AbortController；JSON 解析失败重试一次，二次失败回落中性评分而非崩溃 |
+| R2 | `generateTopics()` 无缓存 | 🟡 | 小 | 待办 | 每次点击重复调用 LLM，浪费额度。建议 `sessionStorage` 缓存 5min TTL |
+| R3 | `generateGameRecap()` 无降级 | 🟡 | 小 | 待办 | 复盘失败时只显示一行文本。建议基于 `judgeHistory` 本地生成基础分析 |
+| R4 | 无 TypeScript strict 模式 | 🟢 | 小 | 待办 | `tsconfig.json` 未开 `strict`。开启后需修复若干类型错误 |
+| R5 | 硬编码投降关键词 `["我认输", "我不知道"]` | 🟢 | 小 | 待办 | 建议扩展为可配置列表或关键词包含匹配 |
 
 ### 🎨 UI / 体验
 
-| # | 问题 | 优先级 | 难度 | 说明 |
-|---|------|--------|------|------|
-| U1 | 无移动端适配 | 🟠 | 中 | 群聊窗口和复盘页在小屏上布局混乱。建议添加 breakpoint 适配 + 底部输入框吸底 |
-| U2 | 无可访问性（a11y） | 🟡 | 中 | 无 ARIA 标签、无键盘导航、无屏幕阅读器支持。建议从 `role` 和 `aria-label` 开始 |
-| U3 | 复盘图表 SVG 无数据时空白 | 🟡 | 小 | `timeline.length <= 1` 时不渲染折线，但占位区域仍在。建议加空状态占位图 |
-| U4 | 无音效/震动反馈 | 🟢 | 小 | 暴露指数涨跌无感官反馈。可用 Web Audio API 加轻量音效或 `navigator.vibrate` |
-| U5 | 无黑暗模式切换——始终暗色 | 🟢 | 小 | 可加浅色主题作为备选，用 CSS 变量切换 |
+| # | 问题 | 优先级 | 难度 | 状态 | 说明 |
+|---|------|--------|------|------|------|
+| U1 | 无移动端适配 | 🟠 | 中 | 待办 | 群聊窗口和复盘页在小屏上布局混乱。建议加 breakpoint 适配 + 输入框吸底 |
+| U2 | 无可访问性（a11y） | 🟡 | 中 | 待办 | 无 ARIA 标签、无键盘导航。建议从无障碍名称与实时区域播报开始 |
+| U3 | 复盘图表 SVG 无数据时空白 | 🟡 | 小 | 待办 | `timeline.length <= 1` 时不渲染折线，但占位区域仍在 |
+| U4 | 无音效/震动反馈 | 🟢 | 小 | 待办 | 暴露指数涨跌无感官反馈。可用 Web Audio API 或 `navigator.vibrate` |
+| U5 | 无深色/浅色主题切换 | 🟢 | 小 | 待办 | 可加浅色主题作为备选，用 CSS 变量切换 |
 
 ### 🔬 工程化
 
-| # | 问题 | 优先级 | 难度 | 说明 |
-|---|------|--------|------|------|
-| E1 | 零测试覆盖 | 🟠 | 中 | 无单元测试/集成测试。建议从 `judgeRound` 的分数计算逻辑和 `computeRecapStats` 开始加 vitest |
-| E2 | 无 CI/CD | 🟡 | 小 | 建议加 GitHub Actions：lint → typecheck → build |
-| E3 | `motion` 包体内含 `framer-motion` 残留 | 🟢 | 小 | node_modules 中两包共存。检查 `package-lock.json` 去重 |
-| E4 | 无 `CHANGELOG` / 版本号管理 | 🟢 | 小 | 建议用 `changesets` 或手动维护 |
+| # | 问题 | 优先级 | 难度 | 状态 | 说明 |
+|---|------|--------|------|------|------|
+| E1 | 测试覆盖不足 | 🟠 | 中 | 🟡 部分完成 | `tests/stream.test.ts` 已覆盖流式解码与顺序守卫（16 项）。仍缺 `startTurn` 调度与 `parseJsonLoose` 之外的评分计算测试 |
+| E2 | 无 CI/CD | 🟡 | 小 | 待办 | 建议加 GitHub Actions：`npm run lint` → `npm test` → `npm run build` |
+| E3 | `motion` 包体内含 `framer-motion` 残留 | 🟢 | 小 | 待办 | 检查 `package-lock.json` 去重 |
+| E4 | 无 `CHANGELOG` / 版本号管理 | 🟢 | 小 | 待办 | 建议用 `changesets` 或手动维护 |
 
 ---
 
@@ -281,9 +368,9 @@ index.html               # HTML 入口
 
 | 耗时 | 适合改什么 |
 |------|-----------|
-| 10 分钟 | A3 localStorage debounce、P3 粒子 useRef、R1 AbortController、R4 tsconfig strict |
+| 10 分钟 | A3 localStorage debounce、P3 粒子 useRef、R4 tsconfig strict |
 | 1 小时 | A4 ErrorBoundary、R2 topics 缓存、E2 CI/CD、U3 空状态 |
-| 半天 | A2 API 代理、U1 移动端适配、E1 单元测试 |
+| 半天 | A2 API 代理、U1 移动端适配、P6 增量批量合并、E1 补充调度测试 |
 | 1-2 天 | A1 组件拆分 + P2 memo、U2 a11y |
 
 ---

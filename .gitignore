@@ -8,3 +8,14 @@ coverage/
 !.env.example
 .opencode/
 .agent-workspace/
+
+# 测试与工具产物
+.npm-cache/
+test-results/
+playwright-report/
+blob-report/
+.vitest/
+*.tmp.ts
+
+# 抓包日志（含真实响应内容，不入库）
+captures/
