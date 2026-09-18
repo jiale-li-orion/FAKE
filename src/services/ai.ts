@@ -10,7 +10,7 @@
  */
 import { Message, JudgeResult, Difficulty, NPCPersonality, JudgeEntry } from "../types";
 import { getAdapter, resetAdapter } from "./llm";
-import type { CallMetrics } from "./llm";
+import type { CallMetrics, LLMAdapter } from "./llm";
 import { parseJsonLoose } from "./stream";
 import {
   NPC_PROFILES,
@@ -21,6 +21,27 @@ import {
   buildRecapPrompt,
   TOPICS_PROMPT,
 } from "./prompts";
+
+/**
+ * 适配器注入点（测试用）。
+ *
+ * 存在的理由：本模块的几乎所有行为都取决于「模型返回什么」，
+ * 若不能在测试里替换适配器，L3 的并发契约就完全无法验证 ——
+ * 只能靠真实 API 调用，那既不稳定也不可离线运行。
+ *
+ * 设为 null 即恢复生产行为（由 getAdapter 读取用户配置）。
+ */
+let injectedAdapter: LLMAdapter | null = null;
+
+/** 仅测试使用：注入一个假适配器；传 null 恢复默认 */
+export function __setAdapterForTest(adapter: LLMAdapter | null): void {
+  injectedAdapter = adapter;
+}
+
+/** 统一的取适配器入口：有注入用注入，否则走生产逻辑 */
+async function resolveAdapter(): Promise<LLMAdapter> {
+  return injectedAdapter ?? getAdapter();
+}
 
 export { resetAdapter, toUserMessage, MissingKeyError } from "./llm";
 export type { CallMetrics } from "./llm";
@@ -43,6 +64,10 @@ export interface TurnMetrics {
   judgeMs: number;
   npcChainMs: number;
   outOfOrderChunks: number;
+  /** 本轮实际参与发言的 NPC 数 */
+  npcCount: number;
+  /** Judge 实际看到的 NPC 发言条数（用于验证「Judge 不等本轮 NPC」） */
+  judgeSawNpcCount: number;
 }
 
 /** 一轮的执行计划：两条路径同时启动，各自可增量消费 */
@@ -71,7 +96,7 @@ export { buildNpcPersonalities as generateNPCPersonalities };
 
 /** 取 JSON 结果，解析失败重试一次 */
 async function completeJson<T>(prompt: string, signal?: AbortSignal): Promise<T> {
-  const adapter = await getAdapter();
+  const adapter = await resolveAdapter();
   const first = await adapter.complete(prompt, { json: true, signal });
   const parsed = parseJsonLoose(first.text);
   if (parsed) return parsed as T;
@@ -141,7 +166,7 @@ export async function generateGameRecap(
 ): Promise<string> {
   const fallback = `在 ${field} 存活 ${rounds} 轮，最终怀疑度 ${finalSuspicion}%。`;
   try {
-    const adapter = await getAdapter();
+    const adapter = await resolveAdapter();
     const result = await adapter.complete(
       buildRecapPrompt({ field, topic, rounds, finalSuspicion, messages, npcs, judgeHistory }),
       { signal },
@@ -173,7 +198,7 @@ async function streamNpcReply(params: {
   onDelta: (delta: string) => void;
   onFirstToken?: () => void;
 }): Promise<{ content: string; metrics: CallMetrics }> {
-  const adapter = await getAdapter();
+  const adapter = await resolveAdapter();
   const recentHistory = params.history
     .slice(-12)
     .map(m => `${m.author}: ${m.content}`)
@@ -226,7 +251,7 @@ export async function judgeRoundWithMetrics(params: {
   difficulty: Difficulty;
   signal?: AbortSignal;
 }): Promise<{ result: JudgeResult; metrics: CallMetrics }> {
-  const adapter = await getAdapter();
+  const adapter = await resolveAdapter();
   const prompt = buildJudgePrompt(params);
 
   const attempt = async (text: string) => {
@@ -340,6 +365,14 @@ export function startTurn(input: TurnInput): TurnPlan {
     // 首字可见时刻：玩家真正感知到的这条消息的等待时间
     let firstTokenAt = -1;
     const step = prevContentPromise.then(async prevContent => {
+      // abort 短路：取消后不再为链上后续 NPC 发起新请求。
+      // 不短路的话，每个 NPC 仍要等一次完整的「已取消」往返，
+      // 整条链会拖到最后一个节点才 settle，UI 的 isLoading 也被无谓拖长。
+      if (signal.aborted) {
+        const err = new Error('本轮已取消');
+        err.name = 'AbortError';
+        throw err;
+      }
       const { content, metrics } = await streamNpcReply({
         npc,
         topic: input.topic,
@@ -386,6 +419,8 @@ export function startTurn(input: TurnInput): TurnPlan {
     judgeMs: judgeEndedAt - judgeStartedAt,
     npcChainMs: npcChainEndedAt - npcChainStartedAt,
     outOfOrderChunks,
+    npcCount: chain.length,
+    judgeSawNpcCount: input.prevNpcDialogue.length,
   }));
 
   return {
