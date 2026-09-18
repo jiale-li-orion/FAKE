@@ -1187,7 +1187,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Main Forum View */}
-      <div id="forum-messages" ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-8 space-y-6 scroll-smooth">
+      <div id="forum-messages" data-testid="message-list" ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-8 space-y-6 scroll-smooth">
         <AnimatePresence mode="popLayout">
           {/* Rule Card — first-time game rules */}
           {showRuleCard && state.status === 'playing' && (
@@ -1244,6 +1244,9 @@ export default function App() {
               initial={{ opacity: 0, x: msg.role === 'player' ? 20 : -20, y: 10 }}
               animate={{ opacity: 1, x: 0, y: 0 }}
               key={msg.id}
+              data-testid={msg.role === 'player' ? 'msg-player' : 'msg-npc'}
+              data-message-id={msg.id}
+              data-npc-id={msg.npcId || ''}
               className={`flex gap-4 max-w-3xl ${msg.role === 'player' ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}
             >
               <div className={`flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center border text-base font-bold ${
@@ -1283,6 +1286,8 @@ export default function App() {
                 initial={{ opacity: 0, x: -20, y: 10 }}
                 animate={{ opacity: 1, x: 0, y: 0 }}
                 exit={{ opacity: 0 }}
+                data-testid="msg-streaming"
+                data-npc-id={npcId}
                 className="flex gap-4 max-w-3xl mr-auto"
               >
                 <div className={`flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center border text-base font-bold ${getNpcColor(npcId)}`}>
@@ -1293,7 +1298,7 @@ export default function App() {
                     <span className="font-bold text-base text-slate-200">{npc?.name || npcId}</span>
                     <span className="text-[10px] text-slate-500 font-mono animate-pulse">生成中…</span>
                   </div>
-                  <div className="p-4 rounded-2xl text-base leading-relaxed bg-slate-900 border border-emerald-500/20 text-slate-100 rounded-tl-none">
+                  <div data-testid="streaming-text" className="p-4 rounded-2xl text-base leading-relaxed bg-slate-900 border border-emerald-500/20 text-slate-100 rounded-tl-none">
                     {content}
                     <span className="inline-block w-[2px] h-[1em] bg-emerald-400 align-middle ml-0.5 animate-pulse" />
                   </div>
@@ -1308,7 +1313,7 @@ export default function App() {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="flex items-center gap-2 pl-1">
             <span className="w-1.5 h-1.5 bg-violet-400/70 rounded-full animate-pulse" />
-            <span className="text-[11px] text-slate-500 font-mono tracking-wide">评审正在观察这一轮…</span>
+            <span data-testid="judge-pending" className="text-[11px] text-slate-500 font-mono tracking-wide">评审正在观察这一轮…</span>
           </motion.div>
         )}
 
@@ -1828,6 +1833,9 @@ export default function App() {
             <div className="relative flex-1 flex gap-2">
               <input
                 autoFocus
+                id="player-input"
+                data-testid="player-input"
+                aria-label="输入你的发言"
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 placeholder={`参与关于 ${state.topic} 的讨论...`}
@@ -1841,6 +1849,8 @@ export default function App() {
             </div>
             <button
               type="submit"
+              data-testid="send-button"
+              aria-label="发送发言"
               disabled={!inputValue.trim() || isTyping}
               className={`rounded-xl flex items-center justify-center transition-all shadow-lg shrink-0 w-14 ${
                 state.suspicion >= 85 ? 'bg-red-600 hover:bg-red-500 disabled:bg-slate-800 shadow-red-900/30 animate-pulse' :

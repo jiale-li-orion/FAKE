@@ -28,12 +28,19 @@ export default defineConfig({
       },
       {
         // ── L4/L5：组件与渲染层，jsdom 环境 ──
+        // 组件测试含 JSX，故同时匹配 .ts 与 .tsx
         extends: true,
         test: {
           name: 'dom',
           environment: 'jsdom',
-          include: ['tests/**/*.dom.test.ts'],
+          include: ['tests/**/*.dom.test.{ts,tsx}'],
           setupFiles: ['tests/setup.dom.ts'],
+          // jsdom + React 19 + motion 的模块图较大，在 WSL 挂载盘上
+          // 冷启动容易超过默认 worker 就绪超时；单线程 + 放宽超时更稳
+          pool: 'threads',
+          maxWorkers: 1,
+          testTimeout: 20_000,
+          hookTimeout: 20_000,
         },
       },
     ],
