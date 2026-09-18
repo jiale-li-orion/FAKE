@@ -1,4 +1,3 @@
-import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import { Message, JudgeResult, Difficulty, NPCPersonality, JudgeEntry } from "../types";
 
@@ -54,42 +53,27 @@ export function generateNPCPersonalities(): NPCPersonality[] {
 // ══════════════════════════════════════════
 
 async function callAI(prompt: string, responseFormat: 'json' | 'text' = 'json', model?: string) {
-  const geminiKey = getStoredKey('GEMINI_API_KEY') || "";
   const deepseekKey = getStoredKey('DEEPSEEK_API_KEY') || "";
 
-  if (deepseekKey) {
-    try {
-      // ⚠️ dangerouslyAllowBrowser: true 表示 API Key 在前端明文传输。
-      // 纯前端架构无法完全规避；如需更高安全性，应改为后端代理转发。
-      const aiDeepSeek = new OpenAI({
-        apiKey: deepseekKey, baseURL: "https://api.deepseek.com", dangerouslyAllowBrowser: true
-      });
-      const response = await aiDeepSeek.chat.completions.create({
-        model: model || "deepseek-v4-flash",
-        messages: [{ role: "user", content: prompt }],
-        response_format: responseFormat === 'json' ? { type: 'json_object' } : undefined,
-      });
-      const content = response.choices[0].message.content || "";
-      if (content) return content;
-    } catch (error) {
-      console.error("DeepSeek API Error, falling back to Gemini:", error);
-    }
+  if (!deepseekKey) {
+    throw new Error("未配置 DEEPSEEK_API_KEY");
   }
 
-  try {
-    const aiGemini = new GoogleGenAI({ apiKey: geminiKey });
-    const response = await aiGemini.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: responseFormat === 'json' ? { responseMimeType: "application/json" } : undefined
-    });
-    const text = response.text;
-    if (!text) throw new Error("Empty response from Gemini");
-    return text;
-  } catch (error) {
-    console.error("Gemini API Error:", error);
-    throw error;
-  }
+  // ⚠️ dangerouslyAllowBrowser: true 表示 API Key 在前端明文传输。
+  // 纯前端架构无法完全规避；如需更高安全性，应改为后端代理转发。
+  const client = new OpenAI({
+    apiKey: deepseekKey, baseURL: "https://api.deepseek.com", dangerouslyAllowBrowser: true
+  });
+
+  const response = await client.chat.completions.create({
+    model: model || "deepseek-v4-flash",
+    messages: [{ role: "user", content: prompt }],
+    response_format: responseFormat === 'json' ? { type: 'json_object' } : undefined,
+  });
+
+  const content = response.choices[0].message.content || "";
+  if (!content) throw new Error("模型返回了空响应");
+  return content;
 }
 
 // ── 生成游戏开场 ──

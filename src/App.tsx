@@ -157,11 +157,9 @@ export default function App() {
   }, [state.status]);
 
   const [showApiKeySettings, setShowApiKeySettings] = useState(false);
-  const [tempGeminiKey, setTempGeminiKey] = useState(localStorage.getItem('GEMINI_API_KEY') || '');
   const [tempDeepseekKey, setTempDeepseekKey] = useState(localStorage.getItem('DEEPSEEK_API_KEY') || '');
 
   const saveApiKeys = () => {
-    localStorage.setItem('GEMINI_API_KEY', tempGeminiKey);
     localStorage.setItem('DEEPSEEK_API_KEY', tempDeepseekKey);
     setShowApiKeySettings(false);
     setErrorMsg(null);
@@ -208,7 +206,7 @@ export default function App() {
       });
     } catch (error) {
       console.error("Failed to start game:", error);
-      setErrorMsg("论坛进不去（AI 响应失败）。请在左侧侧边栏通过 [Settings > Secrets] 添加入自己的 API Key (GEMINI_API_KEY 或 DEEPSEEK_API_KEY)。");
+      setErrorMsg("论坛进不去（AI 响应失败）。请在首页 [API 配置] 面板填入自己的 DEEPSEEK_API_KEY，或检查额度后重试。");
       setState(INITIAL_STATE);
     }
   };
@@ -539,15 +537,9 @@ export default function App() {
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
                 className="mt-4 pt-4 border-t border-slate-700/50 space-y-3">
                 <div className="space-y-1.5">
-                  <label className="text-xs uppercase tracking-wider text-slate-500 font-bold ml-1">Gemini API Key</label>
-                  <input type="password" value={tempGeminiKey} onChange={(e) => setTempGeminiKey(e.target.value)}
-                    placeholder="AI Studio API Key..."
-                    className="w-full bg-slate-900/50 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500/50 transition-colors text-slate-300" />
-                </div>
-                <div className="space-y-1.5">
                   <label className="text-xs uppercase tracking-wider text-slate-500 font-bold ml-1">DeepSeek API Key</label>
                   <input type="password" value={tempDeepseekKey} onChange={(e) => setTempDeepseekKey(e.target.value)}
-                    placeholder="DeepSeek API Key (优先使用)..."
+                    placeholder="sk-..."
                     className="w-full bg-slate-900/50 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500/50 transition-colors text-slate-300" />
                 </div>
                 <button onClick={saveApiKeys}
