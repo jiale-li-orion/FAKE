@@ -209,8 +209,21 @@ src/
 │   └── prompts.ts       # 提示词资产：人格、群聊规则、评分维度、复盘模板
 ├── main.tsx             # React 渲染入口
 └── index.css            # Tailwind CSS 入口
-tests/
-└── stream.test.ts       # 流式解码层回归测试
+tests/                   # 85 项，按架构分层
+├── stream.test.ts       # L1 纯函数解码：顺序守卫、丢帧兜底、JSON 容错
+├── shuffle.test.ts      # L1 随机性：卡方差分测试
+├── transport.test.ts    # L2 传输层：注入式 SSE 夹具，测挂起/取消/错误分类
+├── runtime.test.ts      # L3 运行时：并发契约、依赖契约、取消契约
+├── app.dom.test.tsx     # L4/L5 组件层：流式中间态、状态契约（happy-dom）
+├── sse-inspector.test.ts # 元测试：用已知根因验证判定工具本身
+└── fixtures/
+    └── mock-transport.ts # SSE 注入夹具（stallAfter / reorder / duplicate…）
+tools/
+├── sse-capture-proxy.ts # SSE 抓包代理
+├── sse-inspector.ts     # 乱序根因判定核心（纯函数）
+├── sse-inspect-cli.ts   # 体检 CLI
+├── sse-fault-injector.ts # 6 个已知根因的故障样本
+└── bench-turn.ts        # 一轮耗时基线（并发 vs 串行）
 server.ts                # Express 静态文件服务器 / Vite 开发代理
 survival_demo.ts         # 离线跑批：AI 玩家自动打 10 轮，输出 生存典范.md
 index.html               # HTML 入口
@@ -299,7 +312,7 @@ index.html               # HTML 入口
 
 欢迎提交 PR 共同优化。以下列出目前已知的架构漏洞、性能瓶颈和功能缺陷，标注了优先级（🔴严重 🟠高 🟡中 🟢低）和修复难度。
 
-> **已解决（本轮迭代）**：A7 NPC 链与 Judge 的串行等待已改为并发调度；P1 的「串行链累计 ~10.8s」已由流式增量渲染消除大半——首字出现即可读，不再等整条链跑完；R1 已加入统一超时（45s）、AbortController 与 JSON 解析兜底；**D1 流式挂起导致 UI 永久锁死已修复**（根因是 SDK 的超时覆盖不到流式迭代，详见 [`docs/stream-stall-bug.md`](./stream-stall-bug.md)）；E1 已有 58 项分层测试，含「用已知根因验证判定工具」的元测试。
+> **已解决（本轮迭代）**：A7 NPC 链与 Judge 的串行等待已改为并发调度；P1 的「串行链累计 ~10.8s」已由流式增量渲染消除大半——首字出现即可读，不再等整条链跑完；R1 已加入统一超时（45s）、AbortController 与 JSON 解析兜底；**D1 流式挂起导致 UI 永久锁死已修复**（根因是 SDK 的 `timeout` 与 abort `signal` 都只覆盖到建连阶段，不覆盖响应体读取）；E1 已有 85 项分层测试，含「用已知根因验证判定工具」的元测试。
 > 下面保留原始条目以便追溯，并在状态列标注。
 
 ### 🏗 架构
