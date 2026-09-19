@@ -21,6 +21,53 @@
 
 ---
 
+## 部署是怎么做的
+
+这一节说明线上那份是怎么上去的，以及为什么这个项目能这么部署。
+
+### GitHub Pages 是静态托管，不提供后端
+
+这点容易误解：**GitHub Pages 只能托管静态文件**——它把 HTML / CSS / JS 通过 CDN 发出去，不能运行服务端进程、不能执行任何后端代码、也没有可写的数据库。所以需要一个 Node 服务在跑的方案，放不上来。
+
+它和仓库也是两套东西。源码存在 `main` 分支里，Pages 是另一个独立的 CDN，两者由 workflow 连起来。**部署出去的构建产物不在任何分支上**，用户访问的网页和你 push 的代码不在同一个地方；想改线上内容只能改源码后重新触发构建，不能去某个分支上直接编辑。
+
+### 为什么这个项目适合静态托管
+
+因为它本来就没有服务端。浏览器直连 DeepSeek，API Key 由使用者填、只存在本地 `localStorage`。Express 那一层（`server.ts`）只做两件事：开发时挂 Vite 中间件，生产时把 `dist/` 当静态文件发出去——后者在 Pages 上由 CDN 代劳了，所以 `server.ts` 在生产路径上是多余的。
+
+workflow 里因此显式剔除了 `server.cjs`，避免把一个在 Pages 上永远不会被执行的产物发上去。代价是**在线版必须自己填 Key**：没有服务端就没法代持密钥，这也是「零部署」这个设计换来的。
+
+### 部署链路
+
+```
+main 分支（源码）
+   │ push 触发
+   ▼
+GitHub Actions · build job
+   npm ci → tsc --noEmit → vitest --project unit → vite build
+   （VITE_BASE=/FAKE/，剔除 server.cjs）
+   │
+   ▼
+Actions artifact（github-pages）
+   │
+   ▼
+deploy job → GitHub Pages CDN → https://jiale-li-orion.github.io/FAKE/
+```
+
+触发条件是 push 到 `main`，也可以手动触发（`workflow_dispatch`）。并发控制设了 `cancel-in-progress`，连续 push 不会堆积。构建前会跑类型检查和单元测试，**测试不过就不会部署**——所以这个徽章的状态同时代表类型检查和单测是否通过：
+
+[![Deploy](https://github.com/jiale-li-orion/FAKE/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/jiale-li-orion/FAKE/actions/workflows/deploy-pages.yml)
+
+### 子路径与 base
+
+Pages 把项目站点挂在 `https://<用户名>.github.io/<仓库名>/` 下，资源引用前缀必须跟着变，否则会去根路径找文件而 404。所以 `vite.config.ts` 的 `base` 由 `VITE_BASE` 环境变量控制：Pages 构建传 `/FAKE/`，本地开发与 Express 托管保持 `/`。
+
+### 部署到别处
+
+需要服务端能力（比如由服务端代持 API Key，让用户打开就能玩）时，Pages 不适用，要换成能跑 Node 的平台，并把 `llm.ts` 的请求地址从直连改成本站后端。README 已知问题里的 A2 记着这个取舍。
+
+---
+
 ## 本地运行
 
 ```bash
@@ -221,12 +268,13 @@ src/
 │   └── prompts.ts       # 提示词资产：人格、群聊规则、评分维度、复盘模板
 ├── main.tsx             # React 渲染入口
 └── index.css            # Tailwind CSS 入口
-tests/                   # 85 项，按架构分层
+tests/                   # 98 项，按架构分层
 ├── stream.test.ts       # L1 纯函数解码：顺序守卫、丢帧兜底、JSON 容错
 ├── shuffle.test.ts      # L1 随机性：卡方差分测试
 ├── transport.test.ts    # L2 传输层：注入式 SSE 夹具，测挂起/取消/错误分类
 ├── runtime.test.ts      # L3 运行时：并发契约、依赖契约、取消契约
 ├── app.dom.test.tsx     # L4/L5 组件层：流式中间态、状态契约（happy-dom）
+├── batching.dom.test.tsx # 消费侧拼接错乱复现：分批到达节奏下累积是否失序
 ├── sse-inspector.test.ts # 元测试：用已知根因验证判定工具本身
 └── fixtures/
     └── mock-transport.ts # SSE 注入夹具（stallAfter / reorder / duplicate…）
@@ -236,6 +284,8 @@ tools/
 ├── sse-inspect-cli.ts   # 体检 CLI
 ├── sse-fault-injector.ts # 6 个已知根因的故障样本
 └── bench-turn.ts        # 一轮耗时基线（并发 vs 串行）
+.github/workflows/
+└── deploy-pages.yml     # 类型检查 + 单测 + 构建 + 发布到 GitHub Pages
 server.ts                # Express 静态文件服务器 / Vite 开发代理
 survival_demo.ts         # 离线跑批：AI 玩家自动打 10 轮，输出 生存典范.md
 index.html               # HTML 入口
@@ -316,7 +366,9 @@ index.html               # HTML 入口
 | 动画 | Motion (ex-Framer Motion) |
 | AI SDK | OpenAI SDK（指向 DeepSeek 的 OpenAI 兼容接口） |
 | 图标 | Lucide React |
-| 服务端 | Express (静态文件 + Vite 中间件) |
+| 服务端 | Express (静态文件 + Vite 中间件；仅本地与自托管需要) |
+| 在线版托管 | GitHub Pages（静态 CDN，无后端） |
+| CI | GitHub Actions（类型检查 + 单测 + 构建 + 部署） |
 
 ---
 
@@ -324,7 +376,7 @@ index.html               # HTML 入口
 
 欢迎提交 PR 共同优化。以下列出目前已知的架构漏洞、性能瓶颈和功能缺陷，标注了优先级（🔴严重 🟠高 🟡中 🟢低）和修复难度。
 
-> **已解决（本轮迭代）**：A7 NPC 链与 Judge 的串行等待已改为并发调度；P1 的「串行链累计 ~10.8s」已由流式增量渲染消除大半——首字出现即可读，不再等整条链跑完；R1 已加入统一超时（45s）、AbortController 与 JSON 解析兜底；**D1 流式挂起导致 UI 永久锁死已修复**（根因是 SDK 的 `timeout` 与 abort `signal` 都只覆盖到建连阶段，不覆盖响应体读取）；E1 已有 85 项分层测试，含「用已知根因验证判定工具」的元测试。
+> **已解决（本轮迭代）**：A7 NPC 链与 Judge 的串行等待已改为并发调度；P1 的「串行链累计 ~10.8s」已由流式增量渲染消除大半——首字出现即可读，不再等整条链跑完；R1 已加入统一超时（45s）、AbortController 与 JSON 解析兜底；**D1 流式挂起导致 UI 永久锁死已修复**（根因是 SDK 的 `timeout` 与 abort `signal` 都只覆盖到建连阶段，不覆盖响应体读取）；E1 已有 98 项分层测试，含「用已知根因验证判定工具」的元测试。
 > 下面保留原始条目以便追溯，并在状态列标注。
 
 ### 🏗 架构
@@ -377,6 +429,7 @@ index.html               # HTML 入口
 | E1 | 测试覆盖不足 | 🟠 | 中 | 🟡 部分完成 | `tests/stream.test.ts` 已覆盖流式解码与顺序守卫（16 项）。仍缺 `startTurn` 调度与 `parseJsonLoose` 之外的评分计算测试 |
 | E2 | 无 CI/CD | 🟡 | 小 | 待办 | 建议加 GitHub Actions：`npm run lint` → `npm test` → `npm run build` |
 | E3 | `motion` 包体内含 `framer-motion` 残留 | 🟢 | 小 | 待办 | 检查 `package-lock.json` 去重 |
+| E5 | `react` / `react-dom` 版本漂移会让 DOM 测试整体失败 | 🟠 | 小 | 已处理 | React 19 要求两者版本**完全一致**，`^19.0.1` 这类范围声明会让它们各自漂移，报 "Incompatible React versions" 且表现为全部 DOM 测试失败。已锁为精确版本 `19.2.6`，升级时两个必须同时改 |
 | E4 | 无 `CHANGELOG` / 版本号管理 | 🟢 | 小 | 待办 | 建议用 `changesets` 或手动维护 |
 
 ---

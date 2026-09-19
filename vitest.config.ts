@@ -43,11 +43,15 @@ export default defineConfig({
         },
         test: {
           name: 'dom',
-          // 用 happy-dom 而非 jsdom：jsdom 在这台机器的 WSL 挂载盘上
-          // `require()` 就要 73 秒（实测，磁盘 I/O 受限），超过 vitest
-          // 源码里硬编码的 60 秒 worker 就绪上限（START_TIMEOUT，不可配置）。
-          // happy-dom 实测 39 秒，可容纳。换到正常文件系统的机器上，
-          // jsdom 兼容性更好，可换回。
+          // 用 happy-dom 而非 jsdom：jsdom 在本机 WSL 挂载盘上 require()
+          // 就要 73 秒（实测，磁盘 I/O 受限），超过 vitest 硬编码的 60 秒
+          // worker 就绪上限（START_TIMEOUT，不可配置），启动会超时。
+          //
+          // ⚠️ 但曾经把另一类失败误判成这个问题：React 19 要求 react 与
+          // react-dom 版本**完全一致**，而 package.json 用 ^ 范围声明时
+          // 两者会各自漂移到不同补丁版，DOM 测试全部报
+          // "Incompatible React versions"。已在 package.json 里锁成精确版本。
+          // 遇到 DOM 测试整体失败时，先查版本一致性，再怀疑环境。
           environment: 'happy-dom',
           include: ['tests/**/*.dom.test.{ts,tsx}'],
           setupFiles: ['tests/setup.dom.ts'],
