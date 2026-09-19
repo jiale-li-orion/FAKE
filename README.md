@@ -1,12 +1,14 @@
 # FAKE | 身份流亡
 
-> 身份不是你的。是这一轮的。
+> To fake is to make.
+>
+> 你没有被给一个身份。你必须用语言伪造一个。
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](./CONTRIBUTING.md)
 ![Tech](https://img.shields.io/badge/stack-React%2019%20%7C%20Vite%206%20%7C%20Tailwind%204-blue)
 
-一个关于"语言即身份"的社会模拟器。你是一个身份流亡者，在陌生的群聊中，用语言临时构造身份——混进去，活下去，别崩解。
+一个关于「语言即身份」的社会模拟器。你是身份流亡者，在陌生群聊中用语言伪造专家身份——混进去，活下去，别崩解。
 
 ---
 
@@ -100,7 +102,8 @@ npm test        # 流式解码层回归测试（16 项）
 
 ```
   FAKE
-  身份不是你的。是这一轮的。
+  To fake is to make.
+  你没有被给一个身份。你必须用语言伪造一个。
 
   🎭 每轮你 构造一个新的自己 ——身份只有一句话的寿命
   💬 用NPC的词汇和节奏说话，让他们以为 你是自己人

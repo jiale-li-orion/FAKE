@@ -523,7 +523,8 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
               className="text-slate-400 text-2xl font-medium tracking-wide [text-shadow:0_0_20px_rgba(148,163,184,0.15)]">
-              身份不是你的。是这一轮的。
+              To fake is to make.
+              <span className="block text-base text-slate-500 mt-3 tracking-normal">你没有被给一个身份。你必须用语言伪造一个。</span>
             </motion.p>
           </div>
 
