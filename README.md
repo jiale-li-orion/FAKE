@@ -4,6 +4,7 @@
 >
 > 你没有被给一个身份。你必须用语言伪造一个。
 
+[![Deploy](https://github.com/jiale-li-orion/FAKE/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/jiale-li-orion/FAKE/actions/workflows/deploy-pages.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](./CONTRIBUTING.md)
 ![Tech](https://img.shields.io/badge/stack-React%2019%20%7C%20Vite%206%20%7C%20Tailwind%204-blue)
@@ -12,7 +13,15 @@
 
 ---
 
-## 快速开始
+## 在线试玩
+
+**https://jiale-li-orion.github.io/FAKE/**
+
+打开后先在首页的「API 配置」里填入自己的 DeepSeek API Key。密钥只存在你自己的浏览器里，不会上传。
+
+---
+
+## 本地运行
 
 ```bash
 # 1. 安装依赖

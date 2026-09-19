@@ -1,0 +1,66 @@
+# 把纯前端构建产物发布到 GitHub Pages。
+#
+# 这个项目不需要服务端：浏览器直连 LLM，API Key 由使用者在页面里填、只存在
+# 本地 localStorage。所以静态托管即可完整运行，适合 Pages。
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npx vitest run --project unit
+
+      # Pages 部署在 /FAKE/ 子路径，资源引用需要对应 base
+      - name: Build
+        run: npm run build
+        env:
+          VITE_BASE: /FAKE/
+
+      # 前端是单页应用，但要保证静态站点的根能命中 index.html
+      - name: Prepare artifact
+        run: |
+          mkdir -p dist-pages
+          cp -r dist/assets dist/index.html dist-pages/
+          # 移除服务端产物，Pages 上不需要
+          rm -rf dist-pages/server.cjs dist-pages/server.cjs.map
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist-pages
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
